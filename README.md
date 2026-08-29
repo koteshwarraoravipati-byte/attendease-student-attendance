@@ -2,6 +2,13 @@
 
 Full-stack attendance system for Students, Faculty, and Admins.
 
+## Live deployment
+
+- Frontend: https://attendease-student-attendance.vercel.app
+- API health: https://attendease-api.vercel.app/api/health
+
+The free Vercel API deployment uses ephemeral `/tmp` SQLite storage, so data may reset after a cold start or redeployment. For persistent production attendance records, configure `DATABASE_URL` with a managed MySQL database and set `MONGO_URI`/`MONGO_DB` for activity logs.
+
 ## Stack
 - Frontend: React + Vite
 - Backend: Flask REST API
