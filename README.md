@@ -2,6 +2,11 @@
 
 Full-stack attendance system for Students, Faculty, and Admins.
 
+## Live deployment
+- Frontend: https://attendease-student-attendance.vercel.app
+- API health: https://attendease-api.vercel.app/api/health
+
+
 ## Stack
 - Frontend: React + Vite
 - Backend: Flask REST API
@@ -41,18 +46,13 @@ Open http://localhost:5173. The seeded demo accounts are listed below. The SQLit
 
 For future starts after the first setup, run `powershell -ExecutionPolicy Bypass -File .\start-local.ps1`; it starts both services hidden in the background. Run `powershell -ExecutionPolicy Bypass -File .\stop-local.ps1` when you want to stop them.
 
-### Optional production database settings
+### Persistent production database settings
 
-Copy `backend/.env.example` to `backend/.env` and set `DATABASE_URL` to a MySQL connection string plus `MONGO_URI`/`MONGO_DB` for MongoDB activity logs. Never use the demo secret or demo passwords in production.
+Run `backend/schema.sql` once in the Supabase SQL Editor, then set `DATABASE_URL` to the Supabase PostgreSQL connection string and `JWT_SECRET_KEY` in the Vercel backend environment. Keep database passwords and service-role credentials server-side; never commit them to GitHub or expose them in the React frontend. MongoDB remains optional for flexible activity logs, with a JSONL fallback. Never use the demo secret or demo passwords in production.
 
 The React production build and Flask API tests have been verified locally.
 
-Default seeded accounts:
-- Admin: admin@attendease.local / Admin@123
-- Faculty: faculty@attendease.local / Faculty@123
-- Student: student@attendease.local / Student@123
-
-Change these credentials before using the application beyond local testing.
+The local seed creates the development accounts when you provide `ADMIN_PASSWORD`, `FACULTY_PASSWORD`, and `STUDENT_PASSWORD` in a private environment. The online database was seeded separately; passwords are not stored in GitHub. Change all development credentials before real use.
 
 ## Project flow
 
