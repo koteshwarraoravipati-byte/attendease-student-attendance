@@ -2,18 +2,11 @@
 
 Full-stack attendance system for Students, Faculty, and Admins.
 
-## Live deployment
-
-- Frontend: https://attendease-student-attendance.vercel.app
-- API health: https://attendease-api.vercel.app/api/health
-
-The free Vercel API deployment uses ephemeral `/tmp` SQLite storage, so data may reset after a cold start or redeployment. For persistent production attendance records, configure `DATABASE_URL` with a managed MySQL database and set `MONGO_URI`/`MONGO_DB` for activity logs.
-
 ## Stack
 - Frontend: React + Vite
 - Backend: Flask REST API
 - Local database: SQLite (free, zero-setup development)
-- Production database: MySQL-compatible database
+- Production database: Supabase PostgreSQL (persistent free tier)
 - Activity/audit logs: MongoDB when available, with a local JSONL fallback
 - Deployment: AWS-compatible Dockerfiles and deployment checklist
 
@@ -65,7 +58,7 @@ Change these credentials before using the application beyond local testing.
 
 Student -> Subject -> Attendance Session -> Attendance Records -> Percentage -> Report
 
-MySQL is the source of truth for attendance. MongoDB stores flexible audit/activity events and is not used to calculate percentages.
+PostgreSQL is the source of truth for attendance in the live deployment. MongoDB stores flexible audit/activity events and is not used to calculate percentages.
 
 ## API overview
 
