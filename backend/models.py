@@ -10,7 +10,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(160), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.Enum("STUDENT", "FACULTY", "ADMIN"), nullable=False)
+    role = db.Column(db.Enum("STUDENT", "FACULTY", "ADMIN", name="user_role"), nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     student = db.relationship("Student", backref="user", uselist=False, cascade="all, delete-orphan")
