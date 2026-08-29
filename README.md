@@ -76,3 +76,7 @@ PostgreSQL is the source of truth for attendance in the live deployment. MongoDB
 - POST /api/admin/faculty
 - POST /api/admin/subjects
 - POST /api/admin/enrollments
+
+
+## Persistent production status
+The live backend is configured to use the Supabase PostgreSQL transaction pooler through Vercel server-side environment variables. The React client never receives the database credential.
