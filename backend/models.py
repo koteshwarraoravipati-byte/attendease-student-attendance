@@ -77,6 +77,6 @@ class AttendanceRecord(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey("class_sessions.id"), nullable=False)
     student_id = db.Column(db.Integer, db.ForeignKey("students.id"), nullable=False)
-    status = db.Column(db.Enum("PRESENT", "ABSENT"), nullable=False)
+    status = db.Column(db.Enum("PRESENT", "ABSENT", name="attendance_status"), nullable=False)
     marked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint("session_id", "student_id", name="uq_session_student"),)
