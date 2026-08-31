@@ -1,5 +1,4 @@
 import csv
-import hmac
 import io
 import json
 import os
@@ -104,32 +103,6 @@ def create_app():
         db.session.commit()
         log_activity("student_registered", user.id, {"roll_number": data["roll_number"]})
         return jsonify({"message": "Registration successful"}), 201
-
-    @app.post("/api/auth/bootstrap-admin")
-    def bootstrap_admin():
-        # Disabled unless ADMIN_BOOTSTRAP_KEY is explicitly configured. Remove the
-        # environment variable immediately after the one-time account setup.
-        expected = app.config.get("ADMIN_BOOTSTRAP_KEY", "")
-        provided = request.headers.get("X-Admin-Bootstrap-Key", "")
-        if not expected or not hmac.compare_digest(provided, expected):
-            return jsonify({"error": "Not found"}), 404
-        data = request.get_json() or {}
-        email = (data.get("email") or "").lower().strip()
-        password = data.get("password") or ""
-        if not email or len(password) < 12:
-            return jsonify({"error": "A valid email and strong password are required"}), 400
-        user = User.query.filter_by(email=email).first()
-        if user:
-            user.role = "ADMIN"
-            user.is_active = True
-            user.set_password(password)
-        else:
-            user = User(email=email, role="ADMIN", is_active=True)
-            user.set_password(password)
-            db.session.add(user)
-        db.session.commit()
-        log_activity("admin_bootstrap_created", user.id, {"email": email})
-        return jsonify({"message": "Admin account created", "user": user.to_dict()}), 201
 
     @app.post("/api/auth/login")
     def login():
