@@ -29,4 +29,3 @@ class Config:
     MONGO_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
     MONGO_DB = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "attendease_logs"))
     CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
-    ADMIN_BOOTSTRAP_KEY = os.getenv("ADMIN_BOOTSTRAP_KEY", "")
