@@ -25,5 +25,7 @@ class Config:
     ACTIVITY_LOG_FILE = os.getenv("ACTIVITY_LOG_FILE", os.path.join(os.path.dirname(__file__), "activity_logs.jsonl"))
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-only-change-this-secret-key-32chars")
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    MONGO_DB = os.getenv("MONGO_DB", "attendease_logs")
+    # Accept both naming conventions used by MongoDB Atlas and existing deployments.
+    MONGO_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
+    MONGO_DB = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "attendease_logs"))
+    CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
