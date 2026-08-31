@@ -19,7 +19,7 @@ from models import AttendanceRecord, ClassSession, Enrollment, Faculty, Student,
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
     db.init_app(app)
     JWTManager(app)
 
