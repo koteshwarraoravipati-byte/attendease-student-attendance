@@ -42,7 +42,7 @@ cd ..\frontend
 Start-Process -WindowStyle Hidden -FilePath "C:\Program Files\nodejs\npm.cmd" -ArgumentList "run dev -- --host 127.0.0.1"
 ```
 
-Open http://localhost:5173. The seeded demo accounts are listed below. The SQLite file is created at `backend/instance/attendance.db`, and activity events use `backend/activity_logs.jsonl` when MongoDB is unavailable.
+Open http://localhost:5173. Local demo accounts are created by `backend/seed.py` only after you privately set the `ADMIN_PASSWORD`, `FACULTY_PASSWORD`, and `STUDENT_PASSWORD` environment variables. Never reuse local demo credentials in production. The SQLite file is created at `backend/instance/attendance.db`, and activity events use `backend/activity_logs.jsonl` when MongoDB is unavailable.
 
 For future starts after the first setup, run `powershell -ExecutionPolicy Bypass -File .\start-local.ps1`; it starts both services hidden in the background. Run `powershell -ExecutionPolicy Bypass -File .\stop-local.ps1` when you want to stop them.
 
