@@ -3,34 +3,93 @@ import { createRoot } from 'react-dom/client';
 import { BookOpen, CalendarCheck, ClipboardList, History, GraduationCap, LayoutDashboard, LogOut, ShieldCheck, Users, UserPlus, Library, Link2, RefreshCw } from 'lucide-react';
 import './styles.css';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API = String(import.meta.env.VITE_API_URL || 'http://localhost:5000/api').trim().replace(/\/+$/, '');
 const api = async (path, options = {}) => {
   const token = localStorage.getItem('attendease_token');
-  const response = await fetch(API + path, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(options.headers || {}) }
-  });
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw Error(error.error || 'Request failed');
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+  let response;
+  try {
+    response = await fetch(API + (path.startsWith('/') ? path : '/' + path), {
+      ...options,
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}), ...(options.headers || {}) }
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') throw Error('The attendance service took too long to respond. Please try again.');
+    throw Error('Could not connect to the attendance service. Check your connection and try again.');
+  } finally {
+    window.clearTimeout(timeoutId);
   }
-  return response;
+  const text = await response.text();
+  let payload = {};
+  try { payload = text ? JSON.parse(text) : {}; } catch { payload = { error: text }; }
+  if (!response.ok) {
+    const message = response.status >= 500
+      ? 'The attendance service is temporarily unavailable. Please try again shortly.'
+      : payload.error || 'Request failed (' + response.status + ').';
+    throw Error(message);
+  }
+  return new Response(text, { status: response.status, headers: response.headers });
 };
 
 function Login({ onLogin }) {
   const [mode, setMode] = useState('login');
   const [form, setForm] = useState({ email: '', password: '', name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A' });
-  const [error, setError] = useState('');
-  const update = e => setForm({ ...form, [e.target.name]: e.target.value });
+  const [message, setMessage] = useState('');
+  const [messageKind, setMessageKind] = useState('error');
+  const [busy, setBusy] = useState(false);
+  const update = e => { setForm(current => ({ ...current, [e.target.name]: e.target.value })); setMessage(''); };
   const submit = async e => {
-    e.preventDefault(); setError('');
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true); setMessage('');
     try {
       const response = await api('/auth/' + (mode === 'login' ? 'login' : 'register'), { method: 'POST', body: JSON.stringify(form) });
-      if (mode === 'register') { setMode('login'); setError('Registration successful. Please log in.'); }
-      else { const data = await response.json(); localStorage.setItem('attendease_token', data.token); onLogin(data.user); }
-    } catch (error) { setError(error.message); }
+      if (mode === 'register') {
+        setMode('login');
+        setForm(current => ({ ...current, password: '' }));
+        setMessageKind('success');
+        setMessage('Account created. Please sign in with your new credentials.');
+      } else {
+        const data = await response.json();
+        localStorage.setItem('attendease_token', data.token);
+        onLogin(data.user);
+      }
+    } catch (error) {
+      setMessageKind('error');
+      setMessage(error.message || 'Something went wrong. Please try again.');
+    } finally { setBusy(false); }
   };
-  return <main className="auth-shell"><section className="auth-hero"><div className="brand-mark"><GraduationCap size={28} /></div><p className="eyebrow">SMART CAMPUS OPERATIONS</p><h1>Attendance that keeps everyone in sync.</h1><p>One simple workspace for faculty, students, and academic administrators.</p><div className="hero-stat"><strong>01</strong><span>Student → Subject → Attendance → Report</span></div></section><section className="auth-card"><div className="brand"><div className="brand-icon"><CalendarCheck size={20} /></div><span>AttendEase</span></div><h2>{mode === 'login' ? 'Welcome back' : 'Create student account'}</h2><p className="muted">{mode === 'login' ? 'Sign in to continue to your dashboard.' : 'Register as a student to view your attendance.'}</p><form onSubmit={submit}>{mode === 'register' && <><label>Full name<input name="name" value={form.name} onChange={update} required placeholder="Your name" /></label><div className="two-col"><label>Roll number<input name="roll_number" value={form.roll_number} onChange={update} required placeholder="CSE001" /></label><label>Year<select name="year" value={form.year} onChange={update}><option value="1">1st year</option><option value="2">2nd year</option><option value="3">3rd year</option><option value="4">4th year</option></select></label></div><div className="two-col"><label>Department<input name="department" value={form.department} onChange={update} required /></label><label>Section<input name="section" value={form.section} onChange={update} required /></label></div></>}<label>Email address<input type="email" name="email" value={form.email} onChange={update} required placeholder="you@example.com" /></label><label>Password<input type="password" name="password" value={form.password} onChange={update} required placeholder="••••••••" /></label>{error && <div className="notice">{error}</div>}<button className="primary" type="submit">{mode === 'login' ? 'Sign in' : 'Create account'}</button></form><button className="text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>{mode === 'login' ? 'New student? Create an account' : 'Already have an account? Sign in'}</button><p className="demo">Demo: admin@attendease.local / Admin@123</p></section></main>;
+  const toggleMode = () => { setMode(current => current === 'login' ? 'register' : 'login'); setMessage(''); };
+  return <main className="auth-shell">
+    <section className="auth-hero">
+      <div className="brand-mark"><GraduationCap size={28} /></div>
+      <p className="eyebrow">SMART CAMPUS OPERATIONS</p>
+      <h1>Attendance that keeps everyone in sync.</h1>
+      <p>One simple workspace for faculty, students, and academic administrators.</p>
+      <div className="hero-stat"><strong>01</strong><span>Student → Subject → Attendance → Report</span></div>
+      <div className="hero-orbit" aria-hidden="true"><span /><span /><span /></div>
+    </section>
+    <section className="auth-card">
+      <div className="brand"><div className="brand-icon"><CalendarCheck size={20} /></div><span>AttendEase</span></div>
+      <h2>{mode === 'login' ? 'Welcome back' : 'Create student account'}</h2>
+      <p className="muted">{mode === 'login' ? 'Sign in to continue to your dashboard.' : 'Register as a student to view your attendance.'}</p>
+      <form onSubmit={submit}>
+        {mode === 'register' && <>
+          <label>Full name<input name="name" value={form.name} onChange={update} autoComplete="name" required placeholder="Your name" /></label>
+          <div className="two-col"><label>Roll number<input name="roll_number" value={form.roll_number} onChange={update} required placeholder="CSE001" /></label><label>Year<select name="year" value={form.year} onChange={update}><option value="1">1st year</option><option value="2">2nd year</option><option value="3">3rd year</option><option value="4">4th year</option></select></label></div>
+          <div className="two-col"><label>Department<input name="department" value={form.department} onChange={update} required /></label><label>Section<input name="section" value={form.section} onChange={update} required /></label></div>
+        </>}
+        <label>Email address<input type="email" name="email" value={form.email} onChange={update} required autoComplete="username" placeholder="you@example.com" /></label>
+        <label>Password<input type="password" name="password" value={form.password} onChange={update} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="Enter your password" /></label>
+        {message && <div className={'notice ' + (messageKind === 'success' ? 'success' : '')} role={messageKind === 'success' ? 'status' : 'alert'} aria-live="polite">{message}</div>}
+        <button className="primary auth-submit" type="submit" disabled={busy} aria-busy={busy}>{busy ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign in' : 'Create account')}</button>
+      </form>
+      <button className="text-button" type="button" onClick={toggleMode} disabled={busy}>{mode === 'login' ? 'New student? Create an account' : 'Already have an account? Sign in'}</button>
+      <p className="demo">{mode === 'login' ? 'New students can register below. Staff access is managed by your campus administrator.' : 'Your details will be used to create your student profile.'}</p>
+    </section>
+  </main>;
 }
 
 function App() {
@@ -91,8 +150,8 @@ function AdminOverview({ stats }) {
   return <><section className="welcome-card"><div><p className="eyebrow">ADMINISTRATION</p><h2>Campus attendance overview</h2><p>Manage users, academic structure, and enrollments from one control center.</p></div><ShieldCheck size={54} /></section><div className="stat-grid four-stat"><Stat label="Registered students" value={stats.students} accent="purple" /><Stat label="Faculty members" value={stats.faculty} accent="green" /><Stat label="Subjects" value={stats.subjects} accent="orange" /><Stat label="Class sessions" value={stats.sessions} accent="blue" /></div><section className="panel admin-intro"><div className="panel-head"><div><p className="eyebrow">MANAGEMENT CENTER</p><h2>Everything is ready to configure</h2></div><Users size={30} /></div><p className="muted">Open Manage data to create student and faculty accounts, assign subjects to faculty, and enroll students in subjects. New users receive credentials that work with the main login screen.</p><div className="quick-actions"><div><UserPlus size={18} /><span>Add users and profiles</span></div><div><Library size={18} /><span>Create and assign subjects</span></div><div><Link2 size={18} /><span>Connect students to subjects</span></div></div></section></>;
 }
 
-const emptyStudent = { name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A', email: '', password: 'Student@123' };
-const emptyFaculty = { name: '', department: 'Computer Science', email: '', password: 'Faculty@123' };
+const emptyStudent = { name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A', email: '', password: '' };
+const emptyFaculty = { name: '', department: 'Computer Science', email: '', password: '' };
 const emptySubject = { name: '', code: '', department: 'Computer Science', year: 1, section: 'A', faculty_id: '' };
 
 function AdminManager({ catalog, onChanged }) {
@@ -103,7 +162,7 @@ function AdminManager({ catalog, onChanged }) {
   const saveEdit = async e => { e.preventDefault(); setBusy(true); try { await api('/admin/' + edit.type + '/' + edit.id, { method: 'PUT', body: JSON.stringify(edit.data) }); setMessage('Record updated successfully.'); setEdit(null); onChanged(); } catch (e) { setMessage(e.message); } finally { setBusy(false); } };
   const toggle = async item => { const userId = item.user_id; if (!userId) return setMessage('This profile has no linked login account.'); try { await api('/admin/users/' + userId + '/status', { method: 'PATCH', body: JSON.stringify({ is_active: !item.is_active }) }); setMessage('Account status updated.'); onChanged(); } catch (e) { setMessage(e.message); } };
   const filtered = key => (catalog[key] || []).filter(item => JSON.stringify(item).toLowerCase().includes(query.toLowerCase()));
-  return <><section className="management-head"><div><p className="eyebrow">CONTROL CENTER</p><h2>Manage campus data</h2><p className="muted">Create, update, search, and deactivate academic records.</p></div><button className="secondary" onClick={onChanged}><RefreshCw size={16} />Refresh</button></section>{message && <div className="notice action-notice">{message}</div>}<div className="management-grid"><FormCard title="Add student" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/students', student, () => setStudent(emptyStudent), 'Student account created successfully.'); }}><div className="two-col"><Field label="Full name" name="name" value={student.name} onChange={update(setStudent, student)} required /><Field label="Roll number" name="roll_number" value={student.roll_number} onChange={update(setStudent, student)} required /></div><div className="two-col"><Field label="Email" type="email" name="email" value={student.email} onChange={update(setStudent, student)} required /><Field label="Password" name="password" value={student.password} onChange={update(setStudent, student)} required /></div><div className="three-col"><Field label="Department" name="department" value={student.department} onChange={update(setStudent, student)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={student.year} onChange={update(setStudent, student)} required /><Field label="Section" name="section" value={student.section} onChange={update(setStudent, student)} required /></div><button className="primary small" disabled={busy}>Create student</button></form></FormCard><FormCard title="Add faculty" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/faculty', faculty, () => setFaculty(emptyFaculty), 'Faculty account created successfully.'); }}><Field label="Full name" name="name" value={faculty.name} onChange={update(setFaculty, faculty)} required /><Field label="Department" name="department" value={faculty.department} onChange={update(setFaculty, faculty)} required /><Field label="Login email" type="email" name="email" value={faculty.email} onChange={update(setFaculty, faculty)} required /><Field label="Temporary password" name="password" value={faculty.password} onChange={update(setFaculty, faculty)} required /><button className="primary small" disabled={busy}>Create faculty</button></form></FormCard><FormCard title="Create subject" icon={Library}><form onSubmit={e => { e.preventDefault(); submit('/admin/subjects', subject, () => setSubject(emptySubject), 'Subject created and assigned successfully.'); }}><div className="two-col"><Field label="Subject name" name="name" value={subject.name} onChange={update(setSubject, subject)} required /><Field label="Subject code" name="code" value={subject.code} onChange={update(setSubject, subject)} required placeholder="CS201" /></div><div className="three-col"><Field label="Department" name="department" value={subject.department} onChange={update(setSubject, subject)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={subject.year} onChange={update(setSubject, subject)} required /><Field label="Section" name="section" value={subject.section} onChange={update(setSubject, subject)} required /></div><label>Assign faculty<select name="faculty_id" value={subject.faculty_id} onChange={update(setSubject, subject)}><option value="">Unassigned</option>{catalog.faculty.map(f => <option key={f.id} value={f.id}>{f.name} · {f.department}</option>)}</select></label><button className="primary small" disabled={busy}>Create subject</button></form></FormCard><FormCard title="Enroll student" icon={Link2}><form onSubmit={e => { e.preventDefault(); submit('/admin/enrollments', enrollment, () => setEnrollment({ student_id: '', subject_id: '' }), 'Student enrolled in subject successfully.'); }}><label>Student<select name="student_id" value={enrollment.student_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select student</option>{catalog.students.map(s => <option key={s.id} value={s.id}>{s.roll_number} — {s.name}</option>)}</select></label><label>Subject<select name="subject_id" value={enrollment.subject_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select subject</option>{catalog.subjects.map(s => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}</select></label><button className="primary small" disabled={busy}>Create enrollment</button></form></FormCard></div><section className="panel records-panel"><div className="panel-head"><div><p className="eyebrow">DIRECTORY</p><h2>{tab === 'students' ? 'Students' : tab === 'faculty' ? 'Faculty' : 'Subjects'}</h2></div><div className="directory-tools"><input className="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search records…" /><div className="segmented">{[['students', 'Students'], ['faculty', 'Faculty'], ['subjects', 'Subjects']].map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div></div><Records tab={tab} rows={filtered(tab)} onEdit={item => setEdit({ type: tab === 'students' ? 'students' : tab === 'faculty' ? 'faculty' : 'subjects', id: item.id, data: { ...item } })} onToggle={toggle} /></section>{edit && <EditDialog edit={edit} setEdit={setEdit} saveEdit={saveEdit} busy={busy} catalog={catalog} />}</>;
+  return <><section className="management-head"><div><p className="eyebrow">CONTROL CENTER</p><h2>Manage campus data</h2><p className="muted">Create, update, search, and deactivate academic records.</p></div><button className="secondary" onClick={onChanged}><RefreshCw size={16} />Refresh</button></section>{message && <div className="notice action-notice">{message}</div>}<div className="management-grid"><FormCard title="Add student" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/students', student, () => setStudent(emptyStudent), 'Student account created successfully.'); }}><div className="two-col"><Field label="Full name" name="name" value={student.name} onChange={update(setStudent, student)} required /><Field label="Roll number" name="roll_number" value={student.roll_number} onChange={update(setStudent, student)} required /></div><div className="two-col"><Field label="Email" type="email" name="email" value={student.email} onChange={update(setStudent, student)} required /><Field label="Password" type="password" autoComplete="new-password" name="password" value={student.password} onChange={update(setStudent, student)} required /></div><div className="three-col"><Field label="Department" name="department" value={student.department} onChange={update(setStudent, student)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={student.year} onChange={update(setStudent, student)} required /><Field label="Section" name="section" value={student.section} onChange={update(setStudent, student)} required /></div><button className="primary small" disabled={busy}>Create student</button></form></FormCard><FormCard title="Add faculty" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/faculty', faculty, () => setFaculty(emptyFaculty), 'Faculty account created successfully.'); }}><Field label="Full name" name="name" value={faculty.name} onChange={update(setFaculty, faculty)} required /><Field label="Department" name="department" value={faculty.department} onChange={update(setFaculty, faculty)} required /><Field label="Login email" type="email" name="email" value={faculty.email} onChange={update(setFaculty, faculty)} required /><Field label="Temporary password" type="password" autoComplete="new-password" name="password" value={faculty.password} onChange={update(setFaculty, faculty)} required /><button className="primary small" disabled={busy}>Create faculty</button></form></FormCard><FormCard title="Create subject" icon={Library}><form onSubmit={e => { e.preventDefault(); submit('/admin/subjects', subject, () => setSubject(emptySubject), 'Subject created and assigned successfully.'); }}><div className="two-col"><Field label="Subject name" name="name" value={subject.name} onChange={update(setSubject, subject)} required /><Field label="Subject code" name="code" value={subject.code} onChange={update(setSubject, subject)} required placeholder="CS201" /></div><div className="three-col"><Field label="Department" name="department" value={subject.department} onChange={update(setSubject, subject)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={subject.year} onChange={update(setSubject, subject)} required /><Field label="Section" name="section" value={subject.section} onChange={update(setSubject, subject)} required /></div><label>Assign faculty<select name="faculty_id" value={subject.faculty_id} onChange={update(setSubject, subject)}><option value="">Unassigned</option>{catalog.faculty.map(f => <option key={f.id} value={f.id}>{f.name} · {f.department}</option>)}</select></label><button className="primary small" disabled={busy}>Create subject</button></form></FormCard><FormCard title="Enroll student" icon={Link2}><form onSubmit={e => { e.preventDefault(); submit('/admin/enrollments', enrollment, () => setEnrollment({ student_id: '', subject_id: '' }), 'Student enrolled in subject successfully.'); }}><label>Student<select name="student_id" value={enrollment.student_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select student</option>{catalog.students.map(s => <option key={s.id} value={s.id}>{s.roll_number} — {s.name}</option>)}</select></label><label>Subject<select name="subject_id" value={enrollment.subject_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select subject</option>{catalog.subjects.map(s => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}</select></label><button className="primary small" disabled={busy}>Create enrollment</button></form></FormCard></div><section className="panel records-panel"><div className="panel-head"><div><p className="eyebrow">DIRECTORY</p><h2>{tab === 'students' ? 'Students' : tab === 'faculty' ? 'Faculty' : 'Subjects'}</h2></div><div className="directory-tools"><input className="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search records…" /><div className="segmented">{[['students', 'Students'], ['faculty', 'Faculty'], ['subjects', 'Subjects']].map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div></div><Records tab={tab} rows={filtered(tab)} onEdit={item => setEdit({ type: tab === 'students' ? 'students' : tab === 'faculty' ? 'faculty' : 'subjects', id: item.id, data: { ...item } })} onToggle={toggle} /></section>{edit && <EditDialog edit={edit} setEdit={setEdit} saveEdit={saveEdit} busy={busy} catalog={catalog} />}</>;
 }
 function FormCard({ title, icon: Icon, children }) { return <section className="panel form-card"><div className="form-title"><span className="form-icon"><Icon size={17} /></span><h3>{title}</h3></div>{children}</section>; }
 function Field({ label, ...props }) { return <label>{label}<input {...props} /></label>; }
