@@ -10,7 +10,7 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 from pymongo import MongoClient
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from config import Config
 from models import AttendanceRecord, ClassSession, Enrollment, Faculty, Student, Subject, User, db
@@ -82,9 +82,19 @@ def create_app():
     def faculty_owns_subject(user, subject):
         return user.role == "ADMIN" or (user.faculty and subject.faculty_id == user.faculty.id)
 
+    @app.errorhandler(SQLAlchemyError)
+    def handle_database_error(error):
+        try:
+            db.session.rollback()
+        except SQLAlchemyError:
+            pass
+        app.logger.exception("Database request failed")
+        return jsonify({"error": "The attendance database is temporarily unavailable. Please try again shortly."}), 503
+
     @app.get("/api/health")
     def health():
-        return jsonify({"status": "ok", "service": "attendease-api", "database": app.config["SQLALCHEMY_DATABASE_URI"].split(":")[0]})
+        db.session.execute(db.select(1))
+        return jsonify({"status": "ok", "service": "attendease-api", "database": "available"})
 
     @app.post("/api/auth/register")
     def register():
@@ -346,8 +356,8 @@ def create_app():
             pass
         return jsonify({"events": list(reversed(events))})
 
-    with app.app_context():
-        db.create_all()
+    # Do not perform schema creation during serverless cold starts. Production schema is
+    # managed explicitly; local development uses seed.py/tests to create its tables.
     return app
 
 
