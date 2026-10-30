@@ -29,3 +29,9 @@ class Config:
     MONGO_URI = os.getenv("MONGODB_URI", os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
     MONGO_DB = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "attendease_logs"))
     CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
+
+    # Recovery is disabled until all three values are deliberately configured.
+    FRONTEND_URL = os.getenv("FRONTEND_URL", "")
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+    RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
+    # No proxy headers are trusted by default. See PASSWORD_SECURITY.md.
