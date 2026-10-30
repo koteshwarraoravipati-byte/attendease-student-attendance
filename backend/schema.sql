@@ -78,3 +78,24 @@ CREATE INDEX IF NOT EXISTS ix_subjects_faculty_id ON subjects (faculty_id);
 CREATE INDEX IF NOT EXISTS ix_sessions_subject_date ON class_sessions (subject_id, session_date);
 CREATE INDEX IF NOT EXISTS ix_attendance_student ON attendance_records (student_id);
 CREATE INDEX IF NOT EXISTS ix_attendance_session ON attendance_records (session_id);
+
+-- New installations also require password-security tables/columns.
+-- Explicit operator-run additive migration. NEVER execute during cold starts.
+BEGIN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS recovery_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+ token_hash VARCHAR(64) PRIMARY KEY,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ auth_version INTEGER NOT NULL,
+ expires_at TIMESTAMP NOT NULL,
+ used_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at);
+CREATE TABLE IF NOT EXISTS password_rate_limits (
+ key VARCHAR(64) PRIMARY KEY,
+ window_start BIGINT NOT NULL,
+ count INTEGER NOT NULL
+);
+COMMIT;
