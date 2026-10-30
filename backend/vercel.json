@@ -11,5 +11,10 @@
       "src": "/(.*)",
       "dest": "api/index.py"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "feature/secure-password-flows": false
+    }
+  }
 }
