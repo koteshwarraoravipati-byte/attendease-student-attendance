@@ -16,12 +16,16 @@ from config import Config
 from models import AttendanceRecord, ClassSession, Enrollment, Faculty, Student, Subject, User, db
 
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+    if test_config:
+        app.config.update(test_config)
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
     db.init_app(app)
-    JWTManager(app)
+    jwt = JWTManager(app)
+    from password_security import install_password_security
+    install_password_security(app, jwt)
 
     activity_collection = None
     try:
@@ -120,7 +124,7 @@ def create_app():
         user = User.query.filter_by(email=(data.get("email") or "").lower().strip()).first()
         if not user or not user.is_active or not user.check_password(data.get("password") or ""):
             return jsonify({"error": "Invalid email, password, or inactive account"}), 401
-        token = create_access_token(identity=str(user.id))
+        token = create_access_token(identity=str(user.id), additional_claims={"auth_version": user.auth_version})
         log_activity("login", user.id)
         return jsonify({"token": token, "user": user.to_dict()})
 
