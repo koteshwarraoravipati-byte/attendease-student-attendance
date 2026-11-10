@@ -35,14 +35,46 @@ const api = async (path, options = {}) => {
 
 function Login({ onLogin }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ email: '', password: '', name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A' });
+  const [form, setForm] = useState({ email: '', password: '', otp: '', confirmPassword: '', name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A' });
   const [message, setMessage] = useState('');
   const [messageKind, setMessageKind] = useState('error');
   const [busy, setBusy] = useState(false);
   const update = e => { setForm(current => ({ ...current, [e.target.name]: e.target.value })); setMessage(''); };
+  const switchMode = nextMode => { setMode(nextMode); setMessage(''); setForm(current => ({ ...current, password: '', confirmPassword: '', otp: '' })); };
+  const requestOtp = async () => {
+    setBusy(true); setMessage('');
+    try {
+      const response = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email: form.email }) });
+      const data = await response.json();
+      setMessageKind('success');
+      setMessage(data.message);
+      setMode('reset');
+    } catch (error) {
+      setMessageKind('error');
+      setMessage(error.message || 'Could not send OTP.');
+    } finally { setBusy(false); }
+  };
   const submit = async e => {
     e.preventDefault();
     if (busy) return;
+    if (mode === 'forgot') return requestOtp();
+    if (mode === 'reset') {
+      if (form.password.length < 6) { setMessageKind('error'); setMessage('New password must be at least 6 characters.'); return; }
+      if (form.password !== form.confirmPassword) { setMessageKind('error'); setMessage('Passwords do not match.'); return; }
+      setBusy(true); setMessage('');
+      try {
+        const response = await api('/auth/reset-password', { method: 'POST', body: JSON.stringify({ email: form.email, otp: form.otp.trim(), new_password: form.password }) });
+        const data = await response.json();
+        setMode('login');
+        setForm(current => ({ ...current, password: '', confirmPassword: '', otp: '' }));
+        setMessageKind('success');
+        setMessage(data.message);
+      } catch (error) {
+        setMessageKind('error');
+        setMessage(error.message || 'Could not reset password.');
+      } finally { setBusy(false); }
+      return;
+    }
     setBusy(true); setMessage('');
     try {
       const response = await api('/auth/' + (mode === 'login' ? 'login' : 'register'), { method: 'POST', body: JSON.stringify(form) });
@@ -61,7 +93,13 @@ function Login({ onLogin }) {
       setMessage(error.message || 'Something went wrong. Please try again.');
     } finally { setBusy(false); }
   };
-  const toggleMode = () => { setMode(current => current === 'login' ? 'register' : 'login'); setMessage(''); };
+  const titles = { login: 'Welcome back', register: 'Create student account', forgot: 'Forgot password?', reset: 'Verify OTP & reset' };
+  const subtitles = {
+    login: 'Sign in to continue to your dashboard.',
+    register: 'Register as a student to view your attendance.',
+    forgot: 'Enter your registered email to receive a 6-digit OTP via email.',
+    reset: `Enter the 6-digit OTP sent to ${form.email || 'your email'} and choose a new password.`
+  };
   return <main className="auth-shell">
     <section className="auth-hero">
       <div className="brand-mark"><GraduationCap size={28} /></div>
@@ -73,21 +111,35 @@ function Login({ onLogin }) {
     </section>
     <section className="auth-card">
       <div className="brand"><div className="brand-icon"><CalendarCheck size={20} /></div><span>AttendEase</span></div>
-      <h2>{mode === 'login' ? 'Welcome back' : 'Create student account'}</h2>
-      <p className="muted">{mode === 'login' ? 'Sign in to continue to your dashboard.' : 'Register as a student to view your attendance.'}</p>
+      <h2>{titles[mode]}</h2>
+      <p className="muted">{subtitles[mode]}</p>
       <form onSubmit={submit}>
         {mode === 'register' && <>
           <label>Full name<input name="name" value={form.name} onChange={update} autoComplete="name" required placeholder="Your name" /></label>
           <div className="two-col"><label>Roll number<input name="roll_number" value={form.roll_number} onChange={update} required placeholder="CSE001" /></label><label>Year<select name="year" value={form.year} onChange={update}><option value="1">1st year</option><option value="2">2nd year</option><option value="3">3rd year</option><option value="4">4th year</option></select></label></div>
           <div className="two-col"><label>Department<input name="department" value={form.department} onChange={update} required /></label><label>Section<input name="section" value={form.section} onChange={update} required /></label></div>
         </>}
-        <label>Email address<input type="email" name="email" value={form.email} onChange={update} required autoComplete="username" placeholder="you@example.com" /></label>
-        <label>Password<input type="password" name="password" value={form.password} onChange={update} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="Enter your password" /></label>
+        <label>Email address<input type="email" name="email" value={form.email} onChange={update} required autoComplete="username" placeholder="you@example.com" disabled={mode === 'reset'} /></label>
+        {mode === 'reset' && <label>6-digit OTP<input name="otp" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={form.otp} onChange={update} required placeholder="123456" autoComplete="one-time-code" /></label>}
+        {mode !== 'forgot' && <label>{mode === 'reset' ? 'New password' : 'Password'}<input type="password" name="password" value={form.password} onChange={update} required minLength={mode === 'reset' ? 6 : undefined} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder={mode === 'reset' ? 'At least 6 characters' : 'Enter your password'} /></label>}
+        {mode === 'reset' && <label>Confirm new password<input type="password" name="confirmPassword" value={form.confirmPassword} onChange={update} required minLength={6} autoComplete="new-password" placeholder="Re-enter new password" /></label>}
         {message && <div className={'notice ' + (messageKind === 'success' ? 'success' : '')} role={messageKind === 'success' ? 'status' : 'alert'} aria-live="polite">{message}</div>}
-        <button className="primary auth-submit" type="submit" disabled={busy} aria-busy={busy}>{busy ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign in' : 'Create account')}</button>
+        <button className="primary auth-submit" type="submit" disabled={busy} aria-busy={busy}>
+          {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : mode === 'forgot' ? 'Send OTP' : mode === 'reset' ? 'Reset password' : 'Create account'}
+        </button>
       </form>
-      <button className="text-button" type="button" onClick={toggleMode} disabled={busy}>{mode === 'login' ? 'New student? Create an account' : 'Already have an account? Sign in'}</button>
-      <p className="demo">{mode === 'login' ? 'New students can register below. Staff access is managed by your campus administrator.' : 'Your details will be used to create your student profile.'}</p>
+      <div className="auth-links">
+        {mode === 'login' && <button className="text-button" type="button" disabled={busy} onClick={() => switchMode('forgot')}>Forgot password?</button>}
+        {mode === 'reset' && <button className="text-button" type="button" disabled={busy} onClick={requestOtp}>Resend OTP</button>}
+        {(mode === 'forgot' || mode === 'reset') ? (
+          <button className="text-button" type="button" disabled={busy} onClick={() => switchMode('login')}>Back to sign in</button>
+        ) : (
+          <button className="text-button" type="button" disabled={busy} onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}>
+            {mode === 'login' ? 'New student? Create an account' : 'Already have an account? Sign in'}
+          </button>
+        )}
+      </div>
+      <p className="demo">{mode === 'forgot' || mode === 'reset' ? 'A 6-digit OTP expires in 10 minutes and works once.' : mode === 'login' ? 'New students can register below. Staff access is managed by your campus administrator.' : 'Your details will be used to create your student profile.'}</p>
     </section>
   </main>;
 }
@@ -155,10 +207,11 @@ const emptyFaculty = { name: '', department: 'Computer Science', email: '', pass
 const emptySubject = { name: '', code: '', department: 'Computer Science', year: 1, section: 'A', faculty_id: '' };
 
 function AdminManager({ catalog, onChanged }) {
-  const [tab, setTab] = useState('students'), [query, setQuery] = useState(''), [message, setMessage] = useState(''), [messageKind, setMessageKind] = useState('success'), [busy, setBusy] = useState(false), [edit, setEdit] = useState(null), [deleteTarget, setDeleteTarget] = useState(null);
+  const [tab, setTab] = useState('students'), [query, setQuery] = useState(''), [message, setMessage] = useState(''), [messageKind, setMessageKind] = useState('success'), [busy, setBusy] = useState(false), [edit, setEdit] = useState(null), [deleteTarget, setDeleteTarget] = useState(null), [selectedIds, setSelectedIds] = useState([]);
   const [student, setStudent] = useState(emptyStudent), [faculty, setFaculty] = useState(emptyFaculty), [subject, setSubject] = useState(emptySubject), [enrollment, setEnrollment] = useState({ student_id: '', subject_id: '' });
   const update = (setter, state) => e => setter({ ...state, [e.target.name]: e.target.value });
   const notify = (text, kind = 'success') => { setMessageKind(kind); setMessage(text); };
+  const switchTab = nextTab => { setTab(nextTab); setSelectedIds([]); };
   const submit = async (endpoint, payload, reset, success) => { setBusy(true); setMessage(''); try { await api(endpoint, { method: 'POST', body: JSON.stringify(payload) }); notify(success, 'success'); reset(); onChanged(); } catch (e) { notify(e.message, 'error'); } finally { setBusy(false); } };
   const saveEdit = async e => { e.preventDefault(); setBusy(true); try { await api('/admin/' + edit.type + '/' + edit.id, { method: 'PUT', body: JSON.stringify(edit.data) }); notify('Record updated successfully.', 'success'); setEdit(null); onChanged(); } catch (e) { notify(e.message, 'error'); } finally { setBusy(false); } };
   const toggle = async item => {
@@ -170,22 +223,54 @@ function AdminManager({ catalog, onChanged }) {
       try { await api('/admin/users/' + userId + '/status', { method: 'PATCH', body: JSON.stringify({ is_active: item.is_active === false }) }); notify(item.is_active === false ? 'Account activated.' : 'Account soft-deleted (deactivated).', 'success'); onChanged(); } catch (e) { notify(e.message, 'error'); }
     }
   };
-  const hardDelete = async () => {
+  const bulkStatus = async isActive => {
+    if (!selectedIds.length) return;
+    setBusy(true); setMessage('');
+    try {
+      const res = await api('/admin/' + tab + '/bulk-status', { method: 'POST', body: JSON.stringify({ ids: selectedIds, is_active: isActive }) });
+      const data = await res.json();
+      notify(data.message, 'success');
+      setSelectedIds([]); onChanged();
+    } catch (e) { notify(e.message, 'error'); } finally { setBusy(false); }
+  };
+  const confirmDelete = async () => {
     if (!deleteTarget) return;
     setBusy(true); setMessage('');
     try {
-      const res = await api('/admin/' + deleteTarget.type + '/' + deleteTarget.id, { method: 'DELETE' });
+      const res = deleteTarget.ids
+        ? await api('/admin/' + deleteTarget.type + '/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: deleteTarget.ids }) })
+        : await api('/admin/' + deleteTarget.type + '/' + deleteTarget.id, { method: 'DELETE' });
       const data = await res.json();
-      notify(data.message || 'Record permanently deleted.', 'success');
+      notify(data.message || 'Record(s) permanently deleted.', 'success');
+      if (deleteTarget.ids) setSelectedIds([]);
+      else setSelectedIds(prev => prev.filter(id => id !== deleteTarget.id));
       setDeleteTarget(null); onChanged();
     } catch (e) { notify(e.message, 'error'); setDeleteTarget(null); } finally { setBusy(false); }
   };
   const filtered = key => (catalog[key] || []).filter(item => JSON.stringify(item).toLowerCase().includes(query.toLowerCase()));
-  return <><section className="management-head"><div><p className="eyebrow">CONTROL CENTER</p><h2>Manage campus data</h2><p className="muted">Create, update, soft delete (deactivate), or permanently delete academic records.</p></div><button className="secondary" onClick={onChanged}><RefreshCw size={16} />Refresh</button></section>{message && <div className={'notice action-notice ' + (messageKind === 'success' ? 'success' : '')}>{message}</div>}<div className="management-grid"><FormCard title="Add student" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/students', student, () => setStudent(emptyStudent), 'Student account created successfully.'); }}><div className="two-col"><Field label="Full name" name="name" value={student.name} onChange={update(setStudent, student)} required /><Field label="Roll number" name="roll_number" value={student.roll_number} onChange={update(setStudent, student)} required /></div><div className="two-col"><Field label="Email" type="email" name="email" value={student.email} onChange={update(setStudent, student)} required /><Field label="Password" type="password" autoComplete="new-password" name="password" value={student.password} onChange={update(setStudent, student)} required /></div><div className="three-col"><Field label="Department" name="department" value={student.department} onChange={update(setStudent, student)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={student.year} onChange={update(setStudent, student)} required /><Field label="Section" name="section" value={student.section} onChange={update(setStudent, student)} required /></div><button className="primary small" disabled={busy}>Create student</button></form></FormCard><FormCard title="Add faculty" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/faculty', faculty, () => setFaculty(emptyFaculty), 'Faculty account created successfully.'); }}><Field label="Full name" name="name" value={faculty.name} onChange={update(setFaculty, faculty)} required /><Field label="Department" name="department" value={faculty.department} onChange={update(setFaculty, faculty)} required /><Field label="Login email" type="email" name="email" value={faculty.email} onChange={update(setFaculty, faculty)} required /><Field label="Temporary password" type="password" autoComplete="new-password" name="password" value={faculty.password} onChange={update(setFaculty, faculty)} required /><button className="primary small" disabled={busy}>Create faculty</button></form></FormCard><FormCard title="Create subject" icon={Library}><form onSubmit={e => { e.preventDefault(); submit('/admin/subjects', subject, () => setSubject(emptySubject), 'Subject created and assigned successfully.'); }}><div className="two-col"><Field label="Subject name" name="name" value={subject.name} onChange={update(setSubject, subject)} required /><Field label="Subject code" name="code" value={subject.code} onChange={update(setSubject, subject)} required placeholder="CS201" /></div><div className="three-col"><Field label="Department" name="department" value={subject.department} onChange={update(setSubject, subject)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={subject.year} onChange={update(setSubject, subject)} required /><Field label="Section" name="section" value={subject.section} onChange={update(setSubject, subject)} required /></div><label>Assign faculty<select name="faculty_id" value={subject.faculty_id} onChange={update(setSubject, subject)}><option value="">Unassigned</option>{catalog.faculty.map(f => <option key={f.id} value={f.id}>{f.name} · {f.department}</option>)}</select></label><button className="primary small" disabled={busy}>Create subject</button></form></FormCard><FormCard title="Enroll student" icon={Link2}><form onSubmit={e => { e.preventDefault(); submit('/admin/enrollments', enrollment, () => setEnrollment({ student_id: '', subject_id: '' }), 'Student enrolled in subject successfully.'); }}><label>Student<select name="student_id" value={enrollment.student_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select student</option>{catalog.students.filter(s => s.is_active !== false).map(s => <option key={s.id} value={s.id}>{s.roll_number} — {s.name}</option>)}</select></label><label>Subject<select name="subject_id" value={enrollment.subject_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select subject</option>{catalog.subjects.filter(s => s.is_active !== false).map(s => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}</select></label><button className="primary small" disabled={busy}>Create enrollment</button></form></FormCard></div><section className="panel records-panel"><div className="panel-head"><div><p className="eyebrow">DIRECTORY</p><h2>{tab === 'students' ? 'Students' : tab === 'faculty' ? 'Faculty' : 'Subjects'}</h2></div><div className="directory-tools"><input className="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search records…" /><div className="segmented">{[['students', 'Students'], ['faculty', 'Faculty'], ['subjects', 'Subjects']].map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>{label}</button>)}</div></div></div><Records tab={tab} rows={filtered(tab)} onEdit={item => setEdit({ type: tab, id: item.id, data: { ...item } })} onToggle={toggle} onDelete={item => setDeleteTarget({ type: tab, id: item.id, name: item.name || item.code || 'this record' })} /></section>{edit && <EditDialog edit={edit} setEdit={setEdit} saveEdit={saveEdit} busy={busy} catalog={catalog} />}{deleteTarget && <DeleteDialog target={deleteTarget} onConfirm={hardDelete} onCancel={() => setDeleteTarget(null)} busy={busy} />}</>;
+  const rows = filtered(tab);
+  const toggleSelect = id => setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const allVisibleSelected = rows.length > 0 && rows.every(r => selectedIds.includes(r.id));
+  const toggleSelectAll = () => {
+    if (allVisibleSelected) {
+      const visibleIds = new Set(rows.map(r => r.id));
+      setSelectedIds(prev => prev.filter(id => !visibleIds.has(id)));
+    } else {
+      setSelectedIds(prev => Array.from(new Set([...prev, ...rows.map(r => r.id)])));
+    }
+  };
+  return <><section className="management-head"><div><p className="eyebrow">CONTROL CENTER</p><h2>Manage campus data</h2><p className="muted">Create, update, soft delete (deactivate), or permanently delete academic records.</p></div><button className="secondary" onClick={onChanged}><RefreshCw size={16} />Refresh</button></section>{message && <div className={'notice action-notice ' + (messageKind === 'success' ? 'success' : '')}>{message}</div>}<div className="management-grid"><FormCard title="Add student" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/students', student, () => setStudent(emptyStudent), 'Student account created successfully.'); }}><div className="two-col"><Field label="Full name" name="name" value={student.name} onChange={update(setStudent, student)} required /><Field label="Roll number" name="roll_number" value={student.roll_number} onChange={update(setStudent, student)} required /></div><div className="two-col"><Field label="Email" type="email" name="email" value={student.email} onChange={update(setStudent, student)} required /><Field label="Password" type="password" autoComplete="new-password" name="password" value={student.password} onChange={update(setStudent, student)} required /></div><div className="three-col"><Field label="Department" name="department" value={student.department} onChange={update(setStudent, student)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={student.year} onChange={update(setStudent, student)} required /><Field label="Section" name="section" value={student.section} onChange={update(setStudent, student)} required /></div><button className="primary small" disabled={busy}>Create student</button></form></FormCard><FormCard title="Add faculty" icon={UserPlus}><form onSubmit={e => { e.preventDefault(); submit('/admin/faculty', faculty, () => setFaculty(emptyFaculty), 'Faculty account created successfully.'); }}><Field label="Full name" name="name" value={faculty.name} onChange={update(setFaculty, faculty)} required /><Field label="Department" name="department" value={faculty.department} onChange={update(setFaculty, faculty)} required /><Field label="Login email" type="email" name="email" value={faculty.email} onChange={update(setFaculty, faculty)} required /><Field label="Temporary password" type="password" autoComplete="new-password" name="password" value={faculty.password} onChange={update(setFaculty, faculty)} required /><button className="primary small" disabled={busy}>Create faculty</button></form></FormCard><FormCard title="Create subject" icon={Library}><form onSubmit={e => { e.preventDefault(); submit('/admin/subjects', subject, () => setSubject(emptySubject), 'Subject created and assigned successfully.'); }}><div className="two-col"><Field label="Subject name" name="name" value={subject.name} onChange={update(setSubject, subject)} required /><Field label="Subject code" name="code" value={subject.code} onChange={update(setSubject, subject)} required placeholder="CS201" /></div><div className="three-col"><Field label="Department" name="department" value={subject.department} onChange={update(setSubject, subject)} required /><Field label="Year" type="number" name="year" min="1" max="6" value={subject.year} onChange={update(setSubject, subject)} required /><Field label="Section" name="section" value={subject.section} onChange={update(setSubject, subject)} required /></div><label>Assign faculty<select name="faculty_id" value={subject.faculty_id} onChange={update(setSubject, subject)}><option value="">Unassigned</option>{catalog.faculty.map(f => <option key={f.id} value={f.id}>{f.name} · {f.department}</option>)}</select></label><button className="primary small" disabled={busy}>Create subject</button></form></FormCard><FormCard title="Enroll student" icon={Link2}><form onSubmit={e => { e.preventDefault(); submit('/admin/enrollments', enrollment, () => setEnrollment({ student_id: '', subject_id: '' }), 'Student enrolled in subject successfully.'); }}><label>Student<select name="student_id" value={enrollment.student_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select student</option>{catalog.students.filter(s => s.is_active !== false).map(s => <option key={s.id} value={s.id}>{s.roll_number} — {s.name}</option>)}</select></label><label>Subject<select name="subject_id" value={enrollment.subject_id} onChange={update(setEnrollment, enrollment)} required><option value="">Select subject</option>{catalog.subjects.filter(s => s.is_active !== false).map(s => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}</select></label><button className="primary small" disabled={busy}>Create enrollment</button></form></FormCard></div><section className="panel records-panel"><div className="panel-head"><div><p className="eyebrow">DIRECTORY</p><h2>{tab === 'students' ? 'Students' : tab === 'faculty' ? 'Faculty' : 'Subjects'}</h2></div><div className="directory-tools"><input className="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search records…" /><div className="segmented">{[['students', 'Students'], ['faculty', 'Faculty'], ['subjects', 'Subjects']].map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => switchTab(id)}>{label}</button>)}</div></div></div>{selectedIds.length > 0 && <div className="bulk-bar"><div className="bulk-bar-info"><strong>{selectedIds.length} selected</strong><button type="button" className="mini-button" onClick={() => setSelectedIds([])}>Clear</button></div><div className="bulk-bar-actions"><button type="button" className="mini-button" disabled={busy} onClick={() => bulkStatus(false)}>Deactivate selected</button><button type="button" className="mini-button" disabled={busy} onClick={() => bulkStatus(true)}>Activate selected</button><button type="button" className="mini-button delete-button" disabled={busy} onClick={() => setDeleteTarget({ type: tab, ids: selectedIds, name: `${selectedIds.length} selected ${selectedIds.length === 1 ? tab.slice(0, -1) : tab}` })}>Delete selected</button></div></div>}<Records tab={tab} rows={rows} selectedIds={selectedIds} allSelected={allVisibleSelected} onToggleAll={toggleSelectAll} onToggleSelect={toggleSelect} onEdit={item => setEdit({ type: tab, id: item.id, data: { ...item } })} onToggle={toggle} onDelete={item => setDeleteTarget({ type: tab, id: item.id, name: item.name || item.code || 'this record' })} /></section>{edit && <EditDialog edit={edit} setEdit={setEdit} saveEdit={saveEdit} busy={busy} catalog={catalog} />}{deleteTarget && <DeleteDialog target={deleteTarget} onConfirm={confirmDelete} onCancel={() => setDeleteTarget(null)} busy={busy} />}</>;
 }
 function FormCard({ title, icon: Icon, children }) { return <section className="panel form-card"><div className="form-title"><span className="form-icon"><Icon size={17} /></span><h3>{title}</h3></div>{children}</section>; }
 function Field({ label, ...props }) { return <label>{label}<input {...props} /></label>; }
-function Records({ tab, rows, onEdit, onToggle, onDelete }) { if (!rows.length) return <div className="empty-state">No records found.</div>; if (tab === 'students') return <div className="table-wrap"><table><thead><tr><th>Student</th><th>Roll number</th><th>Department</th><th>Class</th><th>Login</th><th>Actions</th></tr></thead><tbody>{rows.map(s => <tr key={s.id} className={s.is_active === false ? 'row-inactive' : ''}><td><strong>{s.name}{s.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{s.roll_number}</td><td>{s.department}</td><td>Year {s.year} · {s.section}</td><td><small>{s.email || 'No login linked'}</small></td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(s)}>Edit</button><button className="mini-button" onClick={() => onToggle(s)}>{s.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(s)}>Delete</button></td></tr>)}</tbody></table></div>; if (tab === 'faculty') return <div className="table-wrap"><table><thead><tr><th>Faculty</th><th>Department</th><th>Login</th><th>Subjects</th><th>Actions</th></tr></thead><tbody>{rows.map(f => <tr key={f.id} className={f.is_active === false ? 'row-inactive' : ''}><td><strong>{f.name}{f.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{f.department}</td><td><small>{f.email || 'No login linked'}</small></td><td>{f.subject_count}</td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(f)}>Edit</button><button className="mini-button" onClick={() => onToggle(f)}>{f.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(f)}>Delete</button></td></tr>)}</tbody></table></div>; return <div className="table-wrap"><table><thead><tr><th>Subject</th><th>Code</th><th>Class</th><th>Faculty</th><th>Enrolled</th><th>Actions</th></tr></thead><tbody>{rows.map(s => <tr key={s.id} className={s.is_active === false ? 'row-inactive' : ''}><td><strong>{s.name}{s.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{s.code}</td><td>Year {s.year} · {s.section}</td><td>{s.faculty_name}</td><td>{s.enrollment_count}</td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(s)}>Edit</button><button className="mini-button" onClick={() => onToggle(s)}>{s.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(s)}>Delete</button></td></tr>)}</tbody></table></div>; }
+function Records({ tab, rows, selectedIds, allSelected, onToggleAll, onToggleSelect, onEdit, onToggle, onDelete }) {
+  if (!rows.length) return <div className="empty-state">No records found.</div>;
+  const selectHead = <th className="select-col"><input type="checkbox" aria-label="Select all visible records" checked={allSelected} onChange={onToggleAll} /></th>;
+  const selectCell = item => <td className="select-col"><input type="checkbox" aria-label={`Select ${item.name || item.code}`} checked={selectedIds.includes(item.id)} onChange={() => onToggleSelect(item.id)} /></td>;
+  if (tab === 'students') return <div className="table-wrap"><table><thead><tr>{selectHead}<th>Student</th><th>Roll number</th><th>Department</th><th>Class</th><th>Login</th><th>Actions</th></tr></thead><tbody>{rows.map(s => <tr key={s.id} className={(s.is_active === false ? 'row-inactive ' : '') + (selectedIds.includes(s.id) ? 'row-selected' : '')}>{selectCell(s)}<td><strong>{s.name}{s.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{s.roll_number}</td><td>{s.department}</td><td>Year {s.year} · {s.section}</td><td><small>{s.email || 'No login linked'}</small></td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(s)}>Edit</button><button className="mini-button" onClick={() => onToggle(s)}>{s.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(s)}>Delete</button></td></tr>)}</tbody></table></div>;
+  if (tab === 'faculty') return <div className="table-wrap"><table><thead><tr>{selectHead}<th>Faculty</th><th>Department</th><th>Login</th><th>Subjects</th><th>Actions</th></tr></thead><tbody>{rows.map(f => <tr key={f.id} className={(f.is_active === false ? 'row-inactive ' : '') + (selectedIds.includes(f.id) ? 'row-selected' : '')}>{selectCell(f)}<td><strong>{f.name}{f.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{f.department}</td><td><small>{f.email || 'No login linked'}</small></td><td>{f.subject_count}</td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(f)}>Edit</button><button className="mini-button" onClick={() => onToggle(f)}>{f.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(f)}>Delete</button></td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr>{selectHead}<th>Subject</th><th>Code</th><th>Class</th><th>Faculty</th><th>Enrolled</th><th>Actions</th></tr></thead><tbody>{rows.map(s => <tr key={s.id} className={(s.is_active === false ? 'row-inactive ' : '') + (selectedIds.includes(s.id) ? 'row-selected' : '')}>{selectCell(s)}<td><strong>{s.name}{s.is_active === false && <span className="inactive-pill">Inactive</span>}</strong></td><td>{s.code}</td><td>Year {s.year} · {s.section}</td><td>{s.faculty_name}</td><td>{s.enrollment_count}</td><td className="row-actions"><button className="mini-button" onClick={() => onEdit(s)}>Edit</button><button className="mini-button" onClick={() => onToggle(s)}>{s.is_active === false ? 'Activate' : 'Deactivate'}</button><button className="mini-button delete-button" onClick={() => onDelete(s)}>Delete</button></td></tr>)}</tbody></table></div>;
+}
 function EditDialog({ edit, setEdit, saveEdit, busy, catalog }) { const d = edit.data; const update = e => setEdit({ ...edit, data: { ...d, [e.target.name]: e.target.value } }); return <div className="modal-backdrop"><section className="modal panel"><div className="panel-head"><div><p className="eyebrow">EDIT RECORD</p><h2>{edit.type.slice(0, -1).toUpperCase()}</h2></div><button className="close-button" onClick={() => setEdit(null)}>×</button></div><form onSubmit={saveEdit} className="form-card-inner">{edit.type === 'students' && <><Field label="Full name" name="name" value={d.name || ''} onChange={update} required /><Field label="Roll number" name="roll_number" value={d.roll_number || ''} onChange={update} required /><div className="three-col"><Field label="Department" name="department" value={d.department || ''} onChange={update} required /><Field label="Year" type="number" name="year" value={d.year || 1} onChange={update} required /><Field label="Section" name="section" value={d.section || ''} onChange={update} required /></div></>}{edit.type === 'faculty' && <><Field label="Full name" name="name" value={d.name || ''} onChange={update} required /><Field label="Department" name="department" value={d.department || ''} onChange={update} required /></>}{edit.type === 'subjects' && <><Field label="Subject name" name="name" value={d.name || ''} onChange={update} required /><div className="three-col"><Field label="Department" name="department" value={d.department || ''} onChange={update} required /><Field label="Year" type="number" name="year" value={d.year || 1} onChange={update} required /><Field label="Section" name="section" value={d.section || ''} onChange={update} required /></div><label>Assign faculty<select name="faculty_id" value={d.faculty_id || ''} onChange={update}><option value="">Unassigned</option>{catalog.faculty.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label></>}<div className="modal-actions"><button type="button" className="secondary" onClick={() => setEdit(null)}>Cancel</button><button className="primary small" disabled={busy}>Save changes</button></div></form></section></div>}
 function DeleteDialog({ target, onConfirm, onCancel, busy }) { return <div className="modal-backdrop"><section className="modal panel delete-modal"><div className="delete-icon-wrap"><AlertTriangle size={32} /></div><h2>Permanently delete?</h2><p className="muted">You are about to permanently delete <strong>{target.name}</strong>. This action cannot be undone.</p><p className="delete-warning">All linked enrollments and attendance records will be permanently removed. Use <strong>Deactivate</strong> instead if you only want to soft-delete and preserve history.</p><div className="modal-actions"><button type="button" className="secondary" onClick={onCancel} disabled={busy}>Cancel</button><button className="danger-button" onClick={onConfirm} disabled={busy}>{busy ? 'Deleting…' : 'Yes, delete permanently'}</button></div></section></div>; }
 createRoot(document.getElementById('root')).render(<App />);

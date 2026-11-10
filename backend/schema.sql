@@ -79,3 +79,15 @@ CREATE INDEX IF NOT EXISTS ix_subjects_faculty_id ON subjects (faculty_id);
 CREATE INDEX IF NOT EXISTS ix_sessions_subject_date ON class_sessions (subject_id, session_date);
 CREATE INDEX IF NOT EXISTS ix_attendance_student ON attendance_records (student_id);
 CREATE INDEX IF NOT EXISTS ix_attendance_session ON attendance_records (session_id);
+
+CREATE TABLE IF NOT EXISTS password_reset_otps (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  otp_hash VARCHAR(64) NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMP NOT NULL,
+  used_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS ix_password_reset_otps_user_id ON password_reset_otps (user_id);

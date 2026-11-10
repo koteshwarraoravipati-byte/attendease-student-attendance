@@ -1,8 +1,14 @@
 import csv
+import hashlib
+import hmac
 import io
 import json
 import os
-from datetime import date, datetime
+import secrets
+import smtplib
+import ssl
+from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from functools import wraps
 
 from flask import Flask, Response, jsonify, request
@@ -13,7 +19,7 @@ from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from config import Config
-from models import AttendanceRecord, ClassSession, Enrollment, Faculty, Student, Subject, User, db
+from models import AttendanceRecord, ClassSession, Enrollment, Faculty, PasswordResetOTP, Student, Subject, User, db
 
 
 def create_app():
@@ -82,23 +88,86 @@ def create_app():
     def faculty_owns_subject(user, subject):
         return user.role == "ADMIN" or (user.faculty and subject.faculty_id == user.faculty.id)
 
-    subject_schema_ready = False
+    schema_ready = False
 
     @app.before_request
-    def ensure_subject_schema():
-        nonlocal subject_schema_ready
-        if subject_schema_ready or request.path == "/api/health":
+    def ensure_schema():
+        nonlocal schema_ready
+        if schema_ready or request.path == "/api/health":
             return
         try:
             inspector = inspect(db.engine)
-            if "subjects" in inspector.get_table_names():
+            tables = set(inspector.get_table_names())
+            if "subjects" in tables:
                 cols = {c["name"] for c in inspector.get_columns("subjects")}
                 if "is_active" not in cols:
                     with db.engine.begin() as conn:
                         conn.execute(text("ALTER TABLE subjects ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
-            subject_schema_ready = True
+            if "password_reset_otps" not in tables:
+                PasswordResetOTP.__table__.create(db.engine, checkfirst=True)
+            schema_ready = True
         except SQLAlchemyError:
             pass
+
+    def hash_otp(user_id, otp_code):
+        secret = str(app.config.get("JWT_SECRET_KEY") or "attendease-otp-secret").encode("utf-8")
+        return hmac.new(secret, f"{user_id}:{otp_code}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def smtp_is_configured():
+        if app.config.get("OTP_EMAIL_SENDER"):
+            return True
+        return bool(app.config.get("SMTP_HOST") and app.config.get("SMTP_USERNAME") and app.config.get("SMTP_PASSWORD"))
+
+    def send_otp_email(recipient, otp_code, expiry_minutes):
+        if any(ch in recipient for ch in ("\r", "\n")):
+            raise ValueError("Invalid email address")
+        custom_sender = app.config.get("OTP_EMAIL_SENDER")
+        if custom_sender:
+            custom_sender(recipient, otp_code, expiry_minutes)
+            return
+        host = app.config["SMTP_HOST"]
+        port = int(app.config["SMTP_PORT"])
+        username = app.config["SMTP_USERNAME"]
+        password = app.config["SMTP_PASSWORD"]
+        if host.lower() == "smtp.gmail.com":
+            password = password.replace(" ", "")
+        sender = app.config.get("SMTP_FROM_EMAIL") or username
+        if any(ch in sender for ch in ("\r", "\n")):
+            raise ValueError("Invalid sender email address")
+
+        msg = EmailMessage()
+        msg["Subject"] = f"AttendEase Password Reset OTP: {otp_code}"
+        msg["From"] = sender
+        msg["To"] = recipient
+        msg.set_content(
+            f"Hello,\n\nYour AttendEase password reset verification code (OTP) is: {otp_code}\n\n"
+            f"This code expires in {expiry_minutes} minutes and can only be used once.\n"
+            "If you did not request a password reset, you can safely ignore this email.\n"
+        )
+        msg.add_alternative(
+            f"""<div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #ebeaf1;border-radius:14px;">
+                <h2 style="color:#6246c7;margin:0 0 12px;">AttendEase Password Reset</h2>
+                <p style="color:#48435f;">Use this 6-digit verification code to reset your password:</p>
+                <div style="font-size:32px;font-weight:700;letter-spacing:8px;text-align:center;background:#f3efff;color:#6246c7;padding:16px;border-radius:10px;margin:20px 0;">{otp_code}</div>
+                <p style="color:#77738b;font-size:13px;">This code expires in <strong>{expiry_minutes} minutes</strong>. If you didn't request this, ignore this email.</p>
+            </div>""",
+            subtype="html",
+        )
+
+        context = ssl.create_default_context()
+        use_tls = app.config.get("SMTP_USE_TLS", True)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=15, context=context) as smtp:
+                smtp.login(username, password)
+                smtp.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=15) as smtp:
+                smtp.ehlo()
+                if use_tls:
+                    smtp.starttls(context=context)
+                    smtp.ehlo()
+                smtp.login(username, password)
+                smtp.send_message(msg)
 
     @app.errorhandler(SQLAlchemyError)
     def handle_database_error(error):
@@ -149,6 +218,87 @@ def create_app():
         if not user or not user.is_active:
             return jsonify({"error": "Account is inactive"}), 401
         return jsonify({"user": user.to_dict()})
+
+    @app.post("/api/auth/forgot-password")
+    def forgot_password():
+        data = request.get_json() or {}
+        email = (data.get("email") or "").lower().strip()
+        if not email or "@" not in email:
+            return jsonify({"error": "Enter a valid email address"}), 400
+        if not smtp_is_configured():
+            return jsonify({"error": "Google SMTP email service is not configured on the server yet."}), 503
+
+        user = User.query.filter_by(email=email).first()
+        if user and user.is_active:
+            recent = PasswordResetOTP.query.filter_by(user_id=user.id, used_at=None).order_by(PasswordResetOTP.created_at.desc()).first()
+            if recent and (datetime.utcnow() - recent.created_at).total_seconds() < 30:
+                return jsonify({"error": "Please wait 30 seconds before requesting another OTP."}), 429
+
+            PasswordResetOTP.query.filter_by(user_id=user.id, used_at=None).update({"used_at": datetime.utcnow()})
+            otp_code = f"{secrets.randbelow(1000000):06d}"
+            expiry_minutes = max(1, int(app.config.get("OTP_EXPIRY_MINUTES", 10)))
+            otp_row = PasswordResetOTP(
+                user_id=user.id,
+                otp_hash=hash_otp(user.id, otp_code),
+                expires_at=datetime.utcnow() + timedelta(minutes=expiry_minutes),
+            )
+            db.session.add(otp_row)
+            db.session.flush()
+            try:
+                send_otp_email(user.email, otp_code, expiry_minutes)
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Failed to send password reset OTP email")
+                return jsonify({"error": "Could not send OTP email. Check Google SMTP settings and try again."}), 503
+            db.session.commit()
+            log_activity("password_reset_otp_sent", user.id)
+
+        return jsonify({"message": "If an active account exists for this email, a 6-digit OTP has been sent."})
+
+    @app.post("/api/auth/reset-password")
+    def reset_password():
+        data = request.get_json() or {}
+        email = (data.get("email") or "").lower().strip()
+        otp_code = str(data.get("otp") or "").strip()
+        new_password = str(data.get("new_password") or "")
+        if not email or not otp_code or not new_password:
+            return jsonify({"error": "Email, OTP, and new password are required"}), 400
+        if len(new_password) < 6:
+            return jsonify({"error": "New password must be at least 6 characters long"}), 400
+        if not otp_code.isdigit() or len(otp_code) != 6:
+            return jsonify({"error": "Enter the 6-digit numeric OTP sent to your email"}), 400
+
+        user = User.query.filter_by(email=email).first()
+        if not user or not user.is_active:
+            return jsonify({"error": "Invalid or expired OTP"}), 400
+
+        otp_row = PasswordResetOTP.query.filter_by(user_id=user.id, used_at=None).order_by(PasswordResetOTP.created_at.desc()).first()
+        if not otp_row:
+            return jsonify({"error": "No active OTP found. Please request a new OTP."}), 400
+        if otp_row.expires_at < datetime.utcnow():
+            otp_row.used_at = datetime.utcnow()
+            db.session.commit()
+            return jsonify({"error": "OTP has expired. Please request a new OTP."}), 400
+        if otp_row.attempts >= 5:
+            otp_row.used_at = datetime.utcnow()
+            db.session.commit()
+            return jsonify({"error": "Too many incorrect OTP attempts. Please request a new OTP."}), 400
+
+        if not hmac.compare_digest(otp_row.otp_hash, hash_otp(user.id, otp_code)):
+            otp_row.attempts += 1
+            if otp_row.attempts >= 5:
+                otp_row.used_at = datetime.utcnow()
+            db.session.commit()
+            remaining = max(0, 5 - otp_row.attempts)
+            msg = "Too many incorrect OTP attempts. Please request a new OTP." if remaining == 0 else f"Invalid OTP code ({remaining} attempt(s) remaining)."
+            return jsonify({"error": msg}), 400
+
+        now = datetime.utcnow()
+        PasswordResetOTP.query.filter_by(user_id=user.id, used_at=None).update({"used_at": now})
+        user.set_password(new_password)
+        db.session.commit()
+        log_activity("password_reset_completed", user.id)
+        return jsonify({"message": "Password reset successful. You can now sign in with your new password."})
 
     @app.get("/api/student/summary")
     @roles_required("STUDENT")
@@ -379,64 +529,123 @@ def create_app():
         log_activity("admin_changed_subject_status", user.id, {"subject_id": subject_id, "is_active": subject.is_active})
         return jsonify({"message": "Subject status updated", "is_active": subject.is_active})
 
-    def remove_profile_and_account(profile, expected_role):
-        account = profile.user
-        if account and account.role != expected_role:
-            return False
-        db.session.delete(account if account else profile)
-        return True
+    ADMIN_MODELS = {"students": Student, "faculty": Faculty, "subjects": Subject}
 
-    @app.delete("/api/admin/students/<int:student_id>")
+    def attempt_hard_delete(kind, record_id):
+        model = ADMIN_MODELS.get(kind)
+        if not model:
+            return False, "Record type not found", 404, None
+        target = db.session.get(model, record_id)
+        if not target:
+            return False, f"{kind[:-1].title()} #{record_id} not found", 404, None
+        name = target.name
+        if kind == "faculty":
+            session_count = ClassSession.query.filter_by(faculty_id=target.id).count()
+            if session_count > 0:
+                return False, f"{name}: has {session_count} existing class session(s). Deactivate instead.", 409, name
+            for subject in target.subjects:
+                subject.faculty_id = None
+        if kind in ("students", "faculty"):
+            expected_role = "STUDENT" if kind == "students" else "FACULTY"
+            account = target.user
+            if account and account.role != expected_role:
+                return False, f"{name}: linked account role mismatch", 409, name
+            db.session.delete(account if account else target)
+        else:
+            db.session.delete(target)
+        return True, None, 200, name
+
+    @app.delete("/api/admin/<string:kind>/<int:record_id>")
     @roles_required("ADMIN")
-    def delete_student(user, student_id):
-        student = db.session.get(Student, student_id)
-        if not student: return jsonify({"error": "Student not found"}), 404
-        student_name = student.name
-        if not remove_profile_and_account(student, "STUDENT"):
-            return jsonify({"error": "Linked account role mismatch; cannot delete"}), 409
+    def delete_admin_record(user, kind, record_id):
+        if kind not in ADMIN_MODELS:
+            return jsonify({"error": "Record type not found"}), 404
+        ok, err, code, name = attempt_hard_delete(kind, record_id)
+        if not ok:
+            return jsonify({"error": err}), code
         try:
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
-            return jsonify({"error": "Could not delete student due to database constraints"}), 409
-        log_activity("admin_deleted_student", user.id, {"student_id": student_id, "name": student_name})
-        return jsonify({"message": "Student permanently deleted"})
+            return jsonify({"error": f"Could not delete {kind[:-1]} due to database constraints"}), 409
+        log_activity(f"admin_deleted_{kind[:-1]}", user.id, {"record_id": record_id, "name": name})
+        return jsonify({"message": f"{kind[:-1].title()} permanently deleted"})
 
-    @app.delete("/api/admin/faculty/<int:faculty_id>")
+    @app.post("/api/admin/<string:kind>/bulk-delete")
     @roles_required("ADMIN")
-    def delete_faculty(user, faculty_id):
-        faculty = db.session.get(Faculty, faculty_id)
-        if not faculty: return jsonify({"error": "Faculty not found"}), 404
-        session_count = ClassSession.query.filter_by(faculty_id=faculty.id).count()
-        if session_count > 0:
-            return jsonify({"error": f"Cannot delete faculty with {session_count} existing class session(s). Deactivate their account instead."}), 409
-        faculty_name = faculty.name
-        for subject in faculty.subjects:
-            subject.faculty_id = None
-        if not remove_profile_and_account(faculty, "FACULTY"):
-            return jsonify({"error": "Linked account role mismatch; cannot delete"}), 409
+    def bulk_delete_admin_records(user, kind):
+        if kind not in ADMIN_MODELS:
+            return jsonify({"error": "Record type not found"}), 404
+        ids = (request.get_json() or {}).get("ids") or []
+        try:
+            clean_ids = list(dict.fromkeys(int(i) for i in ids))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid record IDs"}), 400
+        if not clean_ids:
+            return jsonify({"error": "Select at least one record"}), 400
+
+        deleted_ids, skipped = [], []
+        for record_id in clean_ids:
+            ok, err, _, _ = attempt_hard_delete(kind, record_id)
+            if ok:
+                deleted_ids.append(record_id)
+            else:
+                skipped.append(err)
+        if not deleted_ids:
+            db.session.rollback()
+            return jsonify({"error": skipped[0] if len(skipped) == 1 else "None of the selected records could be deleted: " + "; ".join(skipped)}), 409
         try:
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
-            return jsonify({"error": "Could not delete faculty due to database constraints"}), 409
-        log_activity("admin_deleted_faculty", user.id, {"faculty_id": faculty_id, "name": faculty_name})
-        return jsonify({"message": "Faculty permanently deleted"})
+            return jsonify({"error": "Could not complete bulk deletion due to database constraints"}), 409
+        log_activity(f"admin_bulk_deleted_{kind}", user.id, {"deleted_ids": deleted_ids, "skipped": skipped})
+        msg = f"Permanently deleted {len(deleted_ids)} {kind[:-1] if len(deleted_ids) == 1 else kind}."
+        if skipped:
+            msg += f" Skipped {len(skipped)}: " + "; ".join(skipped)
+        return jsonify({"message": msg, "deleted": len(deleted_ids), "skipped": skipped})
 
-    @app.delete("/api/admin/subjects/<int:subject_id>")
+    @app.post("/api/admin/<string:kind>/bulk-status")
     @roles_required("ADMIN")
-    def delete_subject(user, subject_id):
-        subject = db.session.get(Subject, subject_id)
-        if not subject: return jsonify({"error": "Subject not found"}), 404
-        subject_name = subject.name
-        db.session.delete(subject)
+    def bulk_status_admin_records(user, kind):
+        if kind not in ADMIN_MODELS:
+            return jsonify({"error": "Record type not found"}), 404
+        data = request.get_json() or {}
+        ids = data.get("ids") or []
+        is_active = bool(data.get("is_active", True))
         try:
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
-            return jsonify({"error": "Could not delete subject due to database constraints"}), 409
-        log_activity("admin_deleted_subject", user.id, {"subject_id": subject_id, "name": subject_name})
-        return jsonify({"message": "Subject permanently deleted"})
+            clean_ids = list(dict.fromkeys(int(i) for i in ids))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid record IDs"}), 400
+        if not clean_ids:
+            return jsonify({"error": "Select at least one record"}), 400
+
+        updated, skipped = 0, []
+        model = ADMIN_MODELS[kind]
+        for record_id in clean_ids:
+            target = db.session.get(model, record_id)
+            if not target:
+                skipped.append(f"#{record_id} not found")
+                continue
+            if kind == "subjects":
+                target.is_active = is_active
+                updated += 1
+            else:
+                account = target.user
+                if not account or account.role == "ADMIN":
+                    skipped.append(f"{target.name} has no modifiable login")
+                    continue
+                account.is_active = is_active
+                updated += 1
+        if updated == 0:
+            return jsonify({"error": skipped[0] if skipped else "No records updated"}), 400
+        db.session.commit()
+        log_activity(f"admin_bulk_status_{kind}", user.id, {"updated": updated, "is_active": is_active})
+        action_word = "activated" if is_active else "deactivated"
+        msg = f"Successfully {action_word} {updated} record(s)."
+        if skipped:
+            msg += f" Skipped {len(skipped)}."
+        return jsonify({"message": msg, "updated": updated, "skipped": skipped})
 
     @app.get("/api/admin/activity")
     @roles_required("ADMIN")

@@ -15,6 +15,7 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     student = db.relationship("Student", backref="user", uselist=False, cascade="all, delete-orphan")
     faculty = db.relationship("Faculty", backref="user", uselist=False, cascade="all, delete-orphan")
+    reset_otps = db.relationship("PasswordResetOTP", backref="user", cascade="all, delete-orphan")
     def set_password(self, password): self.password_hash = generate_password_hash(password)
     def check_password(self, password): return check_password_hash(self.password_hash, password)
     def to_dict(self):
@@ -81,3 +82,14 @@ class AttendanceRecord(db.Model):
     status = db.Column(db.Enum("PRESENT", "ABSENT", name="attendance_status"), nullable=False)
     marked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint("session_id", "student_id", name="uq_session_student"),)
+
+
+class PasswordResetOTP(db.Model):
+    __tablename__ = "password_reset_otps"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    otp_hash = db.Column(db.String(64), nullable=False)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
