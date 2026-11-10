@@ -9,7 +9,7 @@ from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, get_jwt_identity, jwt_required
 from pymongo import MongoClient
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from config import Config
@@ -81,6 +81,24 @@ def create_app():
 
     def faculty_owns_subject(user, subject):
         return user.role == "ADMIN" or (user.faculty and subject.faculty_id == user.faculty.id)
+
+    subject_schema_ready = False
+
+    @app.before_request
+    def ensure_subject_schema():
+        nonlocal subject_schema_ready
+        if subject_schema_ready or request.path == "/api/health":
+            return
+        try:
+            inspector = inspect(db.engine)
+            if "subjects" in inspector.get_table_names():
+                cols = {c["name"] for c in inspector.get_columns("subjects")}
+                if "is_active" not in cols:
+                    with db.engine.begin() as conn:
+                        conn.execute(text("ALTER TABLE subjects ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE"))
+            subject_schema_ready = True
+        except SQLAlchemyError:
+            pass
 
     @app.errorhandler(SQLAlchemyError)
     def handle_database_error(error):
@@ -178,7 +196,7 @@ def create_app():
     @app.get("/api/faculty/subjects")
     @roles_required("FACULTY", "ADMIN")
     def faculty_subjects(user):
-        subjects = Subject.query.filter_by(faculty_id=user.faculty.id).all() if user.role == "FACULTY" else Subject.query.order_by(Subject.code).all()
+        subjects = Subject.query.filter_by(faculty_id=user.faculty.id, is_active=True).all() if user.role == "FACULTY" else Subject.query.filter_by(is_active=True).order_by(Subject.code).all()
         return jsonify({"subjects": [{"id": s.id, "name": s.name, "code": s.code, "department": s.department, "year": s.year, "section": s.section} for s in subjects]})
 
     @app.post("/api/faculty/sessions")
@@ -188,6 +206,8 @@ def create_app():
         subject = db.session.get(Subject, data.get("subject_id"))
         if not subject or not faculty_owns_subject(user, subject):
             return jsonify({"error": "Subject not found or not assigned to you"}), 403
+        if not subject.is_active:
+            return jsonify({"error": "This subject is deactivated and cannot accept new class sessions"}), 400
         if not data.get("date") or not data.get("period"):
             return jsonify({"error": "Date and period are required"}), 400
         try:
@@ -257,7 +277,7 @@ def create_app():
         students = Student.query.order_by(Student.name).all()
         faculty = Faculty.query.order_by(Faculty.name).all()
         subjects = Subject.query.order_by(Subject.code).all()
-        return jsonify({"students": [{"id": s.id, "name": s.name, "roll_number": s.roll_number, "department": s.department, "year": s.year, "section": s.section, "email": s.user.email if s.user else "", "user_id": s.user_id, "is_active": s.user.is_active if s.user else True} for s in students], "faculty": [{"id": f.id, "name": f.name, "department": f.department, "email": f.user.email if f.user else "", "user_id": f.user_id, "subject_count": len(f.subjects), "is_active": f.user.is_active if f.user else True} for f in faculty], "subjects": [{"id": s.id, "name": s.name, "code": s.code, "department": s.department, "year": s.year, "section": s.section, "faculty_id": s.faculty_id, "faculty_name": s.faculty.name if s.faculty else "Unassigned", "enrollment_count": len(s.enrollments)} for s in subjects]})
+        return jsonify({"students": [{"id": s.id, "name": s.name, "roll_number": s.roll_number, "department": s.department, "year": s.year, "section": s.section, "email": s.user.email if s.user else "", "user_id": s.user_id, "is_active": s.user.is_active if s.user else True} for s in students], "faculty": [{"id": f.id, "name": f.name, "department": f.department, "email": f.user.email if f.user else "", "user_id": f.user_id, "subject_count": len(f.subjects), "is_active": f.user.is_active if f.user else True} for f in faculty], "subjects": [{"id": s.id, "name": s.name, "code": s.code, "department": s.department, "year": s.year, "section": s.section, "faculty_id": s.faculty_id, "faculty_name": s.faculty.name if s.faculty else "Unassigned", "enrollment_count": len(s.enrollments), "is_active": s.is_active} for s in subjects]})
 
     @app.post("/api/admin/students")
     @roles_required("ADMIN")
@@ -296,7 +316,11 @@ def create_app():
     def admin_enrollment(user):
         d = request.get_json() or {}; student_id, subject_id = d.get("student_id"), d.get("subject_id")
         if not student_id or not subject_id: return jsonify({"error": "Student and subject are required"}), 400
-        if not db.session.get(Student, int(student_id)) or not db.session.get(Subject, int(subject_id)): return jsonify({"error": "Student or subject not found"}), 404
+        student = db.session.get(Student, int(student_id))
+        subject = db.session.get(Subject, int(subject_id))
+        if not student or not subject: return jsonify({"error": "Student or subject not found"}), 404
+        if not subject.is_active or (student.user and not student.user.is_active):
+            return jsonify({"error": "Cannot enroll a deactivated student or subject"}), 400
         if Enrollment.query.filter_by(student_id=int(student_id), subject_id=int(subject_id)).first(): return jsonify({"error": "Student is already enrolled in this subject"}), 409
         enrollment = Enrollment(student_id=int(student_id), subject_id=int(subject_id)); db.session.add(enrollment); db.session.commit(); log_activity("admin_created_enrollment", user.id, {"enrollment_id": enrollment.id})
         return jsonify({"id": enrollment.id, "message": "Student enrolled"}), 201
@@ -344,6 +368,75 @@ def create_app():
         if not target or target.role == "ADMIN": return jsonify({"error": "User not found or cannot be deactivated"}), 404
         target.is_active = bool((request.get_json() or {}).get("is_active", True)); db.session.commit(); log_activity("admin_changed_user_status", user.id, {"target_user_id": user_id, "is_active": target.is_active})
         return jsonify({"message": "User status updated", "is_active": target.is_active})
+
+    @app.patch("/api/admin/subjects/<int:subject_id>/status")
+    @roles_required("ADMIN")
+    def update_subject_status(user, subject_id):
+        subject = db.session.get(Subject, subject_id)
+        if not subject: return jsonify({"error": "Subject not found"}), 404
+        subject.is_active = bool((request.get_json() or {}).get("is_active", True))
+        db.session.commit()
+        log_activity("admin_changed_subject_status", user.id, {"subject_id": subject_id, "is_active": subject.is_active})
+        return jsonify({"message": "Subject status updated", "is_active": subject.is_active})
+
+    def remove_profile_and_account(profile, expected_role):
+        account = profile.user
+        if account and account.role != expected_role:
+            return False
+        db.session.delete(account if account else profile)
+        return True
+
+    @app.delete("/api/admin/students/<int:student_id>")
+    @roles_required("ADMIN")
+    def delete_student(user, student_id):
+        student = db.session.get(Student, student_id)
+        if not student: return jsonify({"error": "Student not found"}), 404
+        student_name = student.name
+        if not remove_profile_and_account(student, "STUDENT"):
+            return jsonify({"error": "Linked account role mismatch; cannot delete"}), 409
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "Could not delete student due to database constraints"}), 409
+        log_activity("admin_deleted_student", user.id, {"student_id": student_id, "name": student_name})
+        return jsonify({"message": "Student permanently deleted"})
+
+    @app.delete("/api/admin/faculty/<int:faculty_id>")
+    @roles_required("ADMIN")
+    def delete_faculty(user, faculty_id):
+        faculty = db.session.get(Faculty, faculty_id)
+        if not faculty: return jsonify({"error": "Faculty not found"}), 404
+        session_count = ClassSession.query.filter_by(faculty_id=faculty.id).count()
+        if session_count > 0:
+            return jsonify({"error": f"Cannot delete faculty with {session_count} existing class session(s). Deactivate their account instead."}), 409
+        faculty_name = faculty.name
+        for subject in faculty.subjects:
+            subject.faculty_id = None
+        if not remove_profile_and_account(faculty, "FACULTY"):
+            return jsonify({"error": "Linked account role mismatch; cannot delete"}), 409
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "Could not delete faculty due to database constraints"}), 409
+        log_activity("admin_deleted_faculty", user.id, {"faculty_id": faculty_id, "name": faculty_name})
+        return jsonify({"message": "Faculty permanently deleted"})
+
+    @app.delete("/api/admin/subjects/<int:subject_id>")
+    @roles_required("ADMIN")
+    def delete_subject(user, subject_id):
+        subject = db.session.get(Subject, subject_id)
+        if not subject: return jsonify({"error": "Subject not found"}), 404
+        subject_name = subject.name
+        db.session.delete(subject)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "Could not delete subject due to database constraints"}), 409
+        log_activity("admin_deleted_subject", user.id, {"subject_id": subject_id, "name": subject_name})
+        return jsonify({"message": "Subject permanently deleted"})
 
     @app.get("/api/admin/activity")
     @roles_required("ADMIN")

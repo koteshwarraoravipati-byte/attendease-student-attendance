@@ -50,6 +50,7 @@ class Subject(db.Model):
     department = db.Column(db.String(120), nullable=False)
     year = db.Column(db.Integer, nullable=False)
     section = db.Column(db.String(20), nullable=False)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
     faculty_id = db.Column(db.Integer, db.ForeignKey("faculty.id"), nullable=True)
     sessions = db.relationship("ClassSession", backref="subject", cascade="all, delete-orphan")
     enrollments = db.relationship("Enrollment", backref="subject", cascade="all, delete-orphan")

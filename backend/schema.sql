@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS subjects (
   department VARCHAR(120) NOT NULL,
   year INTEGER NOT NULL,
   section VARCHAR(20) NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   faculty_id INTEGER REFERENCES faculty(id) ON DELETE SET NULL
 );
 
