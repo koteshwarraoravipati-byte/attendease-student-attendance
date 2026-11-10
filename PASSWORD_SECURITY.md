@@ -1,5 +1,7 @@
 # Password security
 
+Current mail setup: SMTP is now the default. See SMTP_LOCAL_TEST.md for the local-only inbox and SMTP deployment variables. The Resend-specific setup directions below are legacy and apply only when PASSWORD_MAIL_PROVIDER=resend is explicitly selected. No Resend setup is needed for the local demo.
+
 This implementation is prepared for the feature/secure-password-flows review branch. No production schema, account, mail provider, or deployment was changed. Tests use SQLite and an in-memory mail transport. Apply the migration explicitly before deploying code that reads the new user columns; deployment and migration require separate approval.
 
 ## Operator setup
