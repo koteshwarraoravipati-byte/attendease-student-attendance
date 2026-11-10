@@ -1,5 +1,7 @@
 # Admin deletion and password recovery
 
+Current mail setup: SMTP is now the default. See SMTP_LOCAL_TEST.md for the local-only inbox and SMTP deployment variables. The Resend-specific setup directions below are legacy and apply only when PASSWORD_MAIL_PROVIDER=resend is explicitly selected. No Resend setup is needed for the local demo.
+
 This branch builds on `feature/secure-password-flows` (0031cb4). It adds the missing login-page recovery controls and admin deletion. Nothing in this change applies a production migration or deletes existing records automatically.
 
 ## Admin Delete
