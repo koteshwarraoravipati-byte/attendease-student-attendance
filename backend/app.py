@@ -341,6 +341,45 @@ def create_app(test_config=None):
         db.session.commit(); log_activity("admin_updated_subject", user.id, {"subject_id": subject_id})
         return jsonify({"message": "Subject updated"})
 
+    @app.delete("/api/admin/<string:kind>/<int:record_id>")
+    @roles_required("ADMIN")
+    def delete_admin_record(user, kind, record_id):
+        models = {"students": Student, "faculty": Faculty, "subjects": Subject}
+        model = models.get(kind)
+        if model is None:
+            return jsonify({"error": "Record type not found"}), 404
+        target = db.session.get(model, record_id)
+        if target is None:
+            return jsonify({"error": "Record not found"}), 404
+        if kind == "students":
+            has_history = AttendanceRecord.query.filter_by(student_id=record_id).first()
+        elif kind == "faculty":
+            has_history = ClassSession.query.filter_by(faculty_id=record_id).first()
+        else:
+            has_history = ClassSession.query.filter_by(subject_id=record_id).first()
+        if has_history:
+            return jsonify({"error": "This record has attendance history or class sessions and cannot be deleted. Deactivate the account instead, where available."}), 409
+        account = target.user if kind in ("students", "faculty") else None
+        if account and account.role != ("STUDENT" if kind == "students" else "FACULTY"):
+            return jsonify({"error": "The linked account cannot be deleted through this profile."}), 409
+        if kind == "faculty":
+            for subject in target.subjects:
+                subject.faculty_id = None
+        if account:
+            # Remove recovery links before deleting their referenced login account.
+            from models import PasswordResetToken
+            PasswordResetToken.query.filter_by(user_id=account.id).delete(synchronize_session=False)
+            db.session.delete(account)
+        else:
+            db.session.delete(target)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "This record is still referenced by other data and cannot be deleted."}), 409
+        log_activity("admin_deleted_record", user.id, {"kind": kind, "record_id": record_id})
+        return jsonify({"message": "Record deleted successfully."})
+
     @app.patch("/api/admin/users/<int:user_id>/status")
     @roles_required("ADMIN")
     def update_user_status(user, user_id):
