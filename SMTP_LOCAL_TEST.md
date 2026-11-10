@@ -60,3 +60,7 @@ uv run --no-project --with-requirements requirements-dev.txt --with 'SQLAlchemy=
 ```
 
 SMTP tests cover STARTTLS/implicit TLS and authentication ordering, header injection, recipient refusal, production plaintext rejection, missing configuration, delivery failure cleanup, and a real loopback SMTP request followed by reset, replay rejection, and old-session invalidation. They never send external email.
+
+## Verified in this run
+
+The complete backend suite passed: 40 tests, 232 datetime.utcnow deprecation warnings, 117.45 seconds. The SMTP-only suite also passed: 11 tests. The local frontend build and browser request → captured SMTP email → new password → login flow passed. No external email was sent. Production settings, data, and main were not changed.
