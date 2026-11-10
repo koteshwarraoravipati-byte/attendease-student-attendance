@@ -120,6 +120,13 @@ def install_password_security(app, jwt):
         injected = app.config.get("PASSWORD_MAIL_TRANSPORT") if app.testing else None
         if injected is not None:
             return base, injected
+        provider = app.config.get("PASSWORD_MAIL_PROVIDER", "smtp")
+        if provider == "smtp":
+            from smtp_mail import configured_smtp
+            transport = configured_smtp(app)
+            return (base, transport) if transport else None
+        if provider != "resend":
+            return None
         key, sender = app.config.get("RESEND_API_KEY", ""), app.config.get("RESEND_FROM_EMAIL", "")
         if not key or not sender or "@" not in sender or "\n" in sender or "\r" in sender:
             return None
