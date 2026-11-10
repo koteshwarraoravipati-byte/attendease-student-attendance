@@ -1,0 +1,7 @@
+{
+  "git": {
+    "deploymentEnabled": {
+      "feature/secure-password-flows": false
+    }
+  }
+}

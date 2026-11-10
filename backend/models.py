@@ -12,6 +12,8 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.Enum("STUDENT", "FACULTY", "ADMIN", name="user_role"), nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
+    auth_version = db.Column(db.Integer, default=0, server_default="0", nullable=False)
+    recovery_email_verified = db.Column(db.Boolean, default=False, server_default=db.false(), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     student = db.relationship("Student", backref="user", uselist=False, cascade="all, delete-orphan")
     faculty = db.relationship("Faculty", backref="user", uselist=False, cascade="all, delete-orphan")
@@ -80,3 +82,20 @@ class AttendanceRecord(db.Model):
     status = db.Column(db.Enum("PRESENT", "ABSENT", name="attendance_status"), nullable=False)
     marked_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint("session_id", "student_id", name="uq_session_student"),)
+
+
+class PasswordResetToken(db.Model):
+    __tablename__ = "password_reset_tokens"
+    token_hash = db.Column(db.String(64), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    auth_version = db.Column(db.Integer, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    used_at = db.Column(db.DateTime, nullable=True)
+
+
+class PasswordRateLimit(db.Model):
+    __tablename__ = "password_rate_limits"
+    # Fixed slots bound storage even under attacks using arbitrary email/IP values.
+    key = db.Column(db.String(64), primary_key=True)
+    window_start = db.Column(db.BigInteger, nullable=False)
+    count = db.Column(db.Integer, nullable=False)

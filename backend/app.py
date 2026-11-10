@@ -16,12 +16,16 @@ from config import Config
 from models import AttendanceRecord, ClassSession, Enrollment, Faculty, Student, Subject, User, db
 
 
-def create_app():
+def create_app(test_config=None):
     app = Flask(__name__)
     app.config.from_object(Config)
+    if test_config:
+        app.config.update(test_config)
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
     db.init_app(app)
-    JWTManager(app)
+    jwt = JWTManager(app)
+    from password_security import install_password_security
+    install_password_security(app, jwt)
 
     activity_collection = None
     try:
@@ -120,7 +124,7 @@ def create_app():
         user = User.query.filter_by(email=(data.get("email") or "").lower().strip()).first()
         if not user or not user.is_active or not user.check_password(data.get("password") or ""):
             return jsonify({"error": "Invalid email, password, or inactive account"}), 401
-        token = create_access_token(identity=str(user.id))
+        token = create_access_token(identity=str(user.id), additional_claims={"auth_version": user.auth_version})
         log_activity("login", user.id)
         return jsonify({"token": token, "user": user.to_dict()})
 
@@ -336,6 +340,45 @@ def create_app():
         if "faculty_id" in d: subject.faculty_id = int(d["faculty_id"]) if d["faculty_id"] else None
         db.session.commit(); log_activity("admin_updated_subject", user.id, {"subject_id": subject_id})
         return jsonify({"message": "Subject updated"})
+
+    @app.delete("/api/admin/<string:kind>/<int:record_id>")
+    @roles_required("ADMIN")
+    def delete_admin_record(user, kind, record_id):
+        models = {"students": Student, "faculty": Faculty, "subjects": Subject}
+        model = models.get(kind)
+        if model is None:
+            return jsonify({"error": "Record type not found"}), 404
+        target = db.session.get(model, record_id)
+        if target is None:
+            return jsonify({"error": "Record not found"}), 404
+        if kind == "students":
+            has_history = AttendanceRecord.query.filter_by(student_id=record_id).first()
+        elif kind == "faculty":
+            has_history = ClassSession.query.filter_by(faculty_id=record_id).first()
+        else:
+            has_history = ClassSession.query.filter_by(subject_id=record_id).first()
+        if has_history:
+            return jsonify({"error": "This record has attendance history or class sessions and cannot be deleted. Deactivate the account instead, where available."}), 409
+        account = target.user if kind in ("students", "faculty") else None
+        if account and account.role != ("STUDENT" if kind == "students" else "FACULTY"):
+            return jsonify({"error": "The linked account cannot be deleted through this profile."}), 409
+        if kind == "faculty":
+            for subject in target.subjects:
+                subject.faculty_id = None
+        if account:
+            # Remove recovery links before deleting their referenced login account.
+            from models import PasswordResetToken
+            PasswordResetToken.query.filter_by(user_id=account.id).delete(synchronize_session=False)
+            db.session.delete(account)
+        else:
+            db.session.delete(target)
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            return jsonify({"error": "This record is still referenced by other data and cannot be deleted."}), 409
+        log_activity("admin_deleted_record", user.id, {"kind": kind, "record_id": record_id})
+        return jsonify({"message": "Record deleted successfully."})
 
     @app.patch("/api/admin/users/<int:user_id>/status")
     @roles_required("ADMIN")
