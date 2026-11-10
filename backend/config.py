@@ -30,7 +30,14 @@ class Config:
     MONGO_DB = os.getenv("MONGODB_DB", os.getenv("MONGO_DB", "attendease_logs"))
     CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", "*").split(",") if origin.strip()]
 
-    # Recovery is disabled until all three values are deliberately configured.
+    # Recovery stays disabled until the chosen provider is configured.
+    PASSWORD_MAIL_PROVIDER = os.getenv("PASSWORD_MAIL_PROVIDER", "smtp")
+    SMTP_HOST = os.getenv("SMTP_HOST", "")
+    SMTP_PORT = os.getenv("SMTP_PORT", "587")
+    SMTP_SECURITY = os.getenv("SMTP_SECURITY", "starttls")
+    SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+    SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+    SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
     FRONTEND_URL = os.getenv("FRONTEND_URL", "")
     RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
     RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
