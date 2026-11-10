@@ -72,7 +72,10 @@ def test_real_local_smtp_reset(app):
     finally:
         server.stop()
 
-def test_smtp_failure_stays_generic(app):
+def test_smtp_failure_stays_generic(app, monkeypatch):
+    def fail_send(*args, **kwargs):
+        raise OSError("simulated SMTP outage")
+    monkeypatch.setattr("smtp_mail.SMTPTransport.send", fail_send)
     app.config.update(PASSWORD_MAIL_TRANSPORT=None,PASSWORD_MAIL_PROVIDER='smtp',SMTP_HOST='127.0.0.1',SMTP_PORT=1,SMTP_SECURITY='none',SMTP_FROM_EMAIL='sender@attendease.test',SMTP_USERNAME='',SMTP_PASSWORD='')
     response = app.test_client().post('/api/auth/forgot-password',json={'email':'admin@example.test'})
     assert response.status_code == 200 and response.json == GENERIC
