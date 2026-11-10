@@ -33,9 +33,9 @@ const api = async (path, options = {}) => {
   return new Response(text, { status: response.status, headers: response.headers });
 };
 
-function Login({ onLogin }) {
-  const [mode, setMode] = useState(() => window.location.hash.startsWith('#reset-password?') ? 'reset' : 'login');
-  const [resetToken] = useState(() => new URLSearchParams(window.location.hash.split('?')[1] || '').get('token') || '');
+function Login({ onLogin, externalResetToken = '' }) {
+  const [mode, setMode] = useState(() => externalResetToken ? 'reset' : 'login');
+  const [resetToken] = useState(externalResetToken);
   const [confirmPassword, setConfirmPassword] = useState('');
   useEffect(() => { if (window.location.hash.startsWith('#reset-password?')) window.history.replaceState(null, '', window.location.pathname + window.location.search); }, []);
   const [form, setForm] = useState({ email: '', password: '', name: '', roll_number: '', department: 'Computer Science', year: 1, section: 'A' });
@@ -100,18 +100,22 @@ function Login({ onLogin }) {
       </form>
       {mode === 'login' && <button className="text-button" type="button" disabled={busy} onClick={() => { setMode('forgot'); setMessage(''); setForm(current => ({ ...current, password: '' })); }}>Forgot password?</button>}
       {(mode === 'forgot' || mode === 'reset') ? <button className="text-button" type="button" disabled={busy} onClick={() => { setMode('login'); setMessage(''); setForm(current => ({ ...current, password: '' })); }}>Back to sign in</button> : <button className="text-button" type="button" onClick={toggleMode} disabled={busy}>{mode === 'login' ? 'New student? Create an account' : 'Already have an account? Sign in'}</button>}
-      <p className="demo">{mode === 'login' ? 'New students can register below. Staff access is managed by your campus administrator.' : 'Your details will be used to create your student profile.'}</p>
+      <p className="demo">{mode === 'forgot' || mode === 'reset' ? 'Reset links are sent only to eligible, verified recovery addresses.' : mode === 'login' ? 'New students can register below. Staff access is managed by your campus administrator.' : 'Your details will be used to create your student profile.'}</p>
     </section>
   </main>;
 }
 
 function App() {
   const [user, setUser] = useState(null); const [loading, setLoading] = useState(true);
+  const readResetToken = () => window.location.hash.startsWith('#reset-password?') ? new URLSearchParams(window.location.hash.split('?')[1] || '').get('token') || '' : '';
+  const [recoveryToken, setRecoveryToken] = useState(readResetToken);
+  useEffect(() => { const handle = () => { const token = readResetToken(); if (token) setRecoveryToken(token); }; window.addEventListener('hashchange', handle); return () => window.removeEventListener('hashchange', handle); }, []);
+  const completeLogin = account => { setRecoveryToken(''); setUser(account); };
   useEffect(() => { if (!localStorage.getItem('attendease_token')) return setLoading(false); api('/auth/me').then(r => r.json()).then(d => setUser(d.user)).catch(() => localStorage.removeItem('attendease_token')).finally(() => setLoading(false)); }, []);
   const logout = () => { localStorage.removeItem('attendease_token'); setUser(null); };
   if (loading) return <div className="loading">Loading AttendEase…</div>;
-  if (window.location.hash.startsWith('#reset-password?')) return <Login onLogin={setUser} />;
-  return user ? <Dashboard user={user} onLogout={logout} /> : <Login onLogin={setUser} />;
+  if (recoveryToken) return <Login key={recoveryToken} externalResetToken={recoveryToken} onLogin={completeLogin} />;
+  return user ? <Dashboard user={user} onLogout={logout} /> : <Login onLogin={completeLogin} />;
 }
 
 function Dashboard({ user, onLogout }) {
